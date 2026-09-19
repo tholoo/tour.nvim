@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "id": "annotated-function",
+  "title": "One retry loop, several ideas",
+  "steps": [
+    {
+      "title": "Retry lifecycle",
+      "location": {
+        "file": "examples/code/retry.lua",
+        "range": {
+          "start": {
+            "line": 3,
+            "col": 0
+          },
+          "end": {
+            "line": 15,
+            "col": 0
+          }
+        }
+      },
+      "description": "This function owns the retry lifecycle. Retry policy stays separate from request execution.\n\nThe notes explain individual decisions within this single conceptual stop.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 4,
+              "col": 0
+            },
+            "end": {
+              "line": 5,
+              "col": 0
+            }
+          },
+          "placement": "above",
+          "text": "Track attempts locally."
+        },
+        {
+          "range": {
+            "start": {
+              "line": 7,
+              "col": 10
+            },
+            "end": {
+              "line": 7,
+              "col": 16
+            }
+          },
+          "placement": "inline",
+          "text": "One attempt only."
+        },
+        {
+          "range": {
+            "start": {
+              "line": 8,
+              "col": 0
+            },
+            "end": {
+              "line": 9,
+              "col": 0
+            }
+          },
+          "placement": "below",
+          "text": "The policy decides which failures are transient."
+        },
+        {
+          "range": {
+            "start": {
+              "line": 11,
+              "col": 4
+            },
+            "end": {
+              "line": 11,
+              "col": 19
+            }
+          },
+          "placement": "eol",
+          "text": "Delay may include jitter."
+        },
+        {
+          "range": {
+            "start": {
+              "line": 12,
+              "col": 8
+            },
+            "end": {
+              "line": 12,
+              "col": 16
+            }
+          },
+          "placement": "highlight"
+        }
+      ]
+    }
+  ],
+  "project_root": "."
+}

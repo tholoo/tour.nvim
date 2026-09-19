@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "id": "pr-change-tour",
+  "title": "Serve stale values while refreshing",
+  "source": {
+    "kind": "git_diff",
+    "base": "main",
+    "head": "feature/stale-cache",
+    "note": "Illustrative metadata; no Git access is performed."
+  },
+  "steps": [
+    {
+      "title": "Misses still refresh immediately",
+      "location": {
+        "file": "examples/code/cache.lua",
+        "range": {
+          "start": {
+            "line": 3,
+            "col": 0
+          },
+          "end": {
+            "line": 8,
+            "col": 0
+          }
+        }
+      },
+      "description": "The missing-entry path keeps its existing behavior. Only an already cached stale entry takes the new path.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 5,
+              "col": 0
+            },
+            "end": {
+              "line": 7,
+              "col": 0
+            }
+          },
+          "placement": "above",
+          "text": "No stale value exists to return."
+        }
+      ]
+    },
+    {
+      "title": "Schedule refresh without blocking",
+      "location": {
+        "file": "examples/code/cache.lua",
+        "range": {
+          "start": {
+            "line": 8,
+            "col": 0
+          },
+          "end": {
+            "line": 13,
+            "col": 0
+          }
+        }
+      },
+      "description": "Stale entries schedule work for a later event-loop turn. Production refresh functions should use asynchronous I/O.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 9,
+              "col": 0
+            },
+            "end": {
+              "line": 12,
+              "col": 0
+            }
+          },
+          "placement": "below",
+          "text": "Scheduling separates refresh from the current caller."
+        }
+      ]
+    },
+    {
+      "title": "Return the cached value",
+      "location": {
+        "file": "examples/code/cache.lua",
+        "range": {
+          "start": {
+            "line": 13,
+            "col": 0
+          },
+          "end": {
+            "line": 15,
+            "col": 0
+          }
+        }
+      },
+      "description": "The caller receives the cached value immediately. Completion of the refresh affects a subsequent request.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 13,
+              "col": 2
+            },
+            "end": {
+              "line": 13,
+              "col": 20
+            }
+          },
+          "placement": "highlight"
+        }
+      ]
+    }
+  ],
+  "project_root": "."
+}

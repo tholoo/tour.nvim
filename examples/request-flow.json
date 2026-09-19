@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "id": "request-flow",
+  "title": "From request to database",
+  "steps": [
+    {
+      "title": "Receive the request",
+      "location": {
+        "file": "examples/code/request.lua",
+        "range": {
+          "start": {
+            "line": 10,
+            "col": 0
+          },
+          "end": {
+            "line": 15,
+            "col": 0
+          }
+        }
+      },
+      "description": "The public entry point owns request handling. Routing and persistence are separate operations.",
+      "annotations": []
+    },
+    {
+      "title": "Choose a response",
+      "location": {
+        "file": "examples/code/request.lua",
+        "range": {
+          "start": {
+            "line": 3,
+            "col": 0
+          },
+          "end": {
+            "line": 9,
+            "col": 0
+          }
+        }
+      },
+      "description": "Routing only interprets the request path. It has no dependency on the database.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 4,
+              "col": 0
+            },
+            "end": {
+              "line": 5,
+              "col": 0
+            }
+          },
+          "placement": "eol",
+          "text": "A health check takes the inexpensive branch."
+        }
+      ]
+    },
+    {
+      "title": "Record the result",
+      "location": {
+        "file": "examples/code/request.lua",
+        "range": {
+          "start": {
+            "line": 11,
+            "col": 0
+          },
+          "end": {
+            "line": 14,
+            "col": 0
+          }
+        }
+      },
+      "description": "Every response is recorded after routing, including missing routes. The response then returns to the caller.",
+      "annotations": [
+        {
+          "range": {
+            "start": {
+              "line": 12,
+              "col": 0
+            },
+            "end": {
+              "line": 13,
+              "col": 0
+            }
+          },
+          "placement": "below",
+          "text": "This is the only database boundary."
+        }
+      ]
+    }
+  ],
+  "project_root": "."
+}

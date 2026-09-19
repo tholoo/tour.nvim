@@ -1,0 +1,391 @@
+*tour.txt*  Durable walkthroughs of real code for Neovim 0.13
+
+Author: tour.nvim contributors
+License: MIT
+
+==============================================================================
+CONTENTS                                                        *tour.nvim*
+
+    Introduction                  |tour-introduction|
+    Setup                         |tour-setup|
+    Commands                      |tour-commands|
+    Lua API                       |tour-api|
+    Data format                   |tour-data|
+    Annotations                   |tour-annotations|
+    Detours and edits             |tour-detours|
+    Persistence                   |tour-persistence|
+    Highlights                    |tour-highlights|
+    Development                   |tour-development|
+
+==============================================================================
+INTRODUCTION                                             *tour-introduction*
+
+A tour is durable, ordered data explaining a codebase. Each conceptual step has
+one primary region, a title, a description, and optional notes on individual
+expressions or ranges. The plugin layers presentation onto real code; it never
+inserts explanatory comments into the buffer.
+
+Requires Neovim 0.13, including 0.13 nightly builds. No other runtime dependencies.
+No AI calls, PR fetching, diagrams, workspace management, or permanent sidebars.
+External tools produce data; tour.nvim presents it.
+
+Your editor position and tour progress are independent. Detours do not advance
+or rewind the tour. |TourNext| works from any buffer.
+
+==============================================================================
+SETUP                                                           *tour-setup*
+
+Setup is optional. Defaults initialize when the first public API is called. >lua
+    require('tour').setup({
+      storage = {
+        path = vim.fn.stdpath('state') .. '/tour.nvim',
+        autosave = true,
+      },
+      render = { max_width = 88 },
+      mappings = {},
+    })
+<
+`max_width` must be an integer >= 12. Wrapping also respects the narrowest visible
+window's text width. Storage paths are canonicalized. `autosave = false` disables
+navigation/unload autosaves, not explicit saves, activation, close, restart,
+finish, or the |VimLeavePre| safety save.
+
+Optional mappings use action keys `next`, `prev`, `overview`, `resume`, `close`
+and mapping strings as values, e.g. `mappings = { next = ']t' }`.
+
+No global keys are mapped by default. The plugin supplies these normal-mode
+<Plug> mappings: >vim
+    <Plug>(tour-next)       <Plug>(tour-prev)
+    <Plug>(tour-overview)   <Plug>(tour-resume)
+    <Plug>(tour-close)      <Plug>(tour-finish)
+    <Plug>(tour-restart)    <Plug>(tour-save)
+<
+Suggested mappings (replace any existing mappings, including built-ins): >lua
+    vim.keymap.set('n', ']t', '<Plug>(tour-next)')
+    vim.keymap.set('n', '[t', '<Plug>(tour-prev)')
+<
+No statusline or signcolumn setting is changed.
+
+==============================================================================
+COMMANDS                                                     *tour-commands*
+
+:TourResume                                                    *:TourResume*
+    Load the current project's most recently saved/active tour. Completed tours
+    can also resume. Root detection uses the current working directory.
+
+:TourNext                                                        *:TourNext*
+:TourPrev                                                        *:TourPrev*
+    Advance/rewind one conceptual step, regardless of current buffer or cursor.
+    Clamp at the ends. Reaching the last step does not automatically finish.
+
+:TourGoto {index}                                                *:TourGoto*
+    Jump to a 1-based step index. Supports completion.
+
+:TourOpen [id]                                                   *:TourOpen*
+    Open a saved tour by ID. Without an ID, show this project's saved tours via
+    |vim.ui.select()|. Completion lists this project's saved IDs.
+
+:TourList[!]                                                     *:TourList*
+    Select a saved tour. By default filter to this project; ! shows all projects.
+
+:TourOverview                                               *:TourOverview*
+    Select a step in the loaded tour. A dot denotes the current step; checks
+    denote preceding positions (or completion), not a separate visit history.
+
+:TourSave                                                        *:TourSave*
+    Reconcile moving extmarks into semantic positions and persist progress.
+
+:TourClose                                                      *:TourClose*
+    Save and clear presentation/tracking. Saved data and the loaded semantic
+    tour remain available. Later navigation can reopen its presentation.
+
+:TourFinish                                                    *:TourFinish*
+    Mark the loaded tour completed, save, and clear presentation. Preserve the
+    current step, even when finishing early. Never delete the saved tour.
+
+:TourRestart                                                  *:TourRestart*
+    Clear completion, return to step 1, save, and display.
+
+:TourLoad {json-file}                                             *:TourLoad*
+    Read JSON, validate, normalize, save, and display it. File completion is
+    supported. Relative source files resolve against the project root, NOT the
+    JSON file's directory. Paths with spaces are accepted as a single argument.
+
+Commands report failures through |vim.notify()|. A missing navigation target does
+not advance progress or clear the previous step's UI.
+
+==============================================================================
+LUA API                                                          *tour-api*
+
+All functions are in `require('tour')`. Lua errors are raised for invalid input,
+unresolvable targets, or persistence failures; callers can use |pcall()|.
+
+setup({opts})                                                 *tour.setup()*
+    Initialize configuration, highlight defaults, commands, and autocmds.
+    Repeated setup closes the current presentation before changing config.
+
+start({data})                                                 *tour.start()*
+    Normalize and copy a new v1 tour, save, activate and display its current step.
+    Save semantic data even if the first source location is unavailable, so the
+    tour remains recoverable. Reusing an ID updates that saved tour; an ID owned
+    by another project is rejected. Returns a detached normalized tour.
+
+load({path})                                                   *tour.load()*
+    Decode JSON from path and call start(). Returns the normalized tour.
+
+resume()                                                     *tour.resume()*
+open({id})                                                     *tour.open()*
+    Restore a saved tour and its progress. Return a detached semantic copy.
+    Completed tours remain navigable with their completed flag until restart().
+
+next()                                                         *tour.next()*
+prev()                                                         *tour.prev()*
+goto_step({index})                                         *tour.goto_step()*
+    Navigate conceptual steps. Return detached semantic data. goto_step rejects
+    non-integer or out-of-bounds indices. next/prev clamp at the ends.
+
+overview()                                                 *tour.overview()*
+    Show a |vim.ui.select()| picker of steps; selection navigates directly.
+
+list({opts})                                                   *tour.list()*
+    Return copied saved tour data for this project, newest update first; ID
+    breaks timestamp ties. `{ all = true }` includes all projects. This function
+    returns data; use :TourList for the picker. Malformed files warn and skip.
+
+save()                                                         *tour.save()*
+    Reconcile active tracking marks and write tour/index. Return a semantic copy.
+
+close()                                                       *tour.close()*
+finish()                                                     *tour.finish()*
+restart()                                                   *tour.restart()*
+    See corresponding commands. close() is harmless when no tour is loaded.
+    restart() returns the displayed semantic copy.
+
+current()                                                   *tour.current()*
+    Return a deep semantic copy, or nil if no tour has been loaded. Reconcile
+    runtime edits first. No buffer, window or extmark IDs are exposed. A closed
+    or finished tour remains loaded and is still returned by current().
+
+statusline()                                             *tour.statusline()*
+    Return "Tour 4/8 · Retry policy" while presentation is active, otherwise "".
+    Escape literal percent signs for statusline format strings. Does not install
+    or modify a statusline.
+
+==============================================================================
+DATA FORMAT                                                     *tour-data*
+
+The machine-readable schema is `schema/tour.schema.json` in the repository.
+Interchange and persisted tours share version 1. Unknown fields are rejected
+except within `source`. Fields do not accept JSON null except nested source data.
+Non-empty strings must contain a non-whitespace character. Outside source, NUL
+characters are rejected.
+
+Tour fields:
+    version        Required; exactly 1.
+    title          Required non-empty string.
+    steps          Required non-empty ordered array of step objects.
+    id             Optional; generated if absent. Globally unique, 1-128 ASCII
+                   letters, digits, underscores or hyphens.
+    project_root   Optional path. Canonical absolute path after normalization.
+    current_step   Optional integer, default 1; must be within the step array.
+    completed      Optional boolean, default false.
+    created_at     Optional UTC YYYY-MM-DDTHH:MM:SSZ, default current time.
+    updated_at     Optional same UTC syntax, default created_at; refreshed on save.
+    source         Optional arbitrary JSON object containing provenance metadata.
+
+Step fields:
+    title          Required non-empty string.
+    location       Required location object.
+    id             Optional non-empty string; supplied IDs must be unique.
+    description    Optional multiline string; source text is never hard-wrapped.
+    annotations    Optional annotation array, default empty.
+
+Location fields:
+    file           Required non-empty path; relative to project_root or absolute.
+    range          Required range object.
+    anchor         Optional non-empty single-line literal substring, expected on
+                   the range's START line. Used for row relocation.
+
+Annotation fields:
+    range          Required range in the same file as the primary location.
+    placement      Required: above, below, inline, eol, or highlight.
+    text           Required non-empty string, except optional for highlight.
+                   Multiline text is supported; highlight ignores text.
+
+Positions and ranges:
+    Lines are 1-based. Columns are 0-based BYTE offsets. Ends are exclusive.
+    Both positions must exist in the file and lie on UTF-8 boundaries. Columns
+    may equal the line's byte length. End must not precede start. Empty ranges
+    are valid. A line one past EOF is not valid; use the last line's byte length.
+    Tabs count as one byte. `{ line = N, col = 0 }` excludes line N when used as
+    the end of a multiline range.
+
+Example (from repository root): >lua
+    require('tour').start({
+      version = 1,
+      title = 'Request flow',
+      project_root = '.',
+      steps = {
+        {
+          title = 'Receive and record',
+          location = {
+            file = 'examples/code/request.lua',
+            range = {
+              start = { line = 10, col = 0 },
+              ['end'] = { line = 15, col = 0 },
+            },
+          },
+          description = 'Routing precedes persistence.\n\nEvery response is recorded.',
+          annotations = {
+            {
+              range = {
+                start = { line = 12, col = 2 },
+                ['end'] = { line = 12, col = 10 },
+              },
+              placement = 'below',
+              text = 'The database boundary.',
+            },
+          },
+        },
+      },
+    })
+<
+Annotations may lie outside the primary region but must resolve in its file.
+JSON Schema checks structure. Lua adds range ordering, step ID uniqueness,
+progress bounds, and NUL validation. File existence and byte boundaries are
+checked when resolving each step, so not-yet-visited source may be unavailable.
+
+Project root resolution:
+    1. Explicit project_root (relative roots resolve from the current directory).
+    2. Nearest ancestor .git directory or worktree marker file from cwd.
+    3. Current working directory.
+
+Paths normalize and resolve symlinks where possible. Absolute source paths inside
+root become relative in persistence; outside paths remain absolute. No Git process
+is required. No working directory or project/workspace state is changed.
+
+==============================================================================
+ANNOTATIONS                                              *tour-annotations*
+
+Main descriptions are wrapped virtual lines above the primary range, preceded by
+a title and Tour N/M counter. No real buffer text is changed.
+
+above       Wrapped virtual lines immediately before the first target line.
+below       Wrapped virtual lines after the last line covered by the range.
+inline      Short virtual text at the range's exclusive end; shifts displayed
+            source to the right. Does not change bytes or cursor coordinates.
+eol         Short virtual text after the last source line covered by the range.
+highlight   Stronger highlighting on the exact range, without explanatory text.
+
+Inline/EOL overflow continues below in virtual lines. When insufficient space
+remains for a readable fragment, the entire note is displayed below. Multiple
+notes remain part of a single conceptual step.
+
+Wrapping preserves newlines and paragraphs and counts display cells, including
+wide Unicode characters. Width is limited by max_width, prefixes, and current
+window text space after number/sign columns. Multiple views of the same buffer
+share wrapping at the narrowest visible width. Resize events reflow the text.
+Neovim 0.13's virt_lines_overflow="wrap" also handles viewport overflow.
+
+Only the active step is decorated. The primary range uses an underline plus
+number-column highlights (if numbers are already enabled), without taking over
+signs. |TourClose|, |TourFinish| and navigation clear the plugin-owned namespaces.
+
+==============================================================================
+DETOURS AND EDITS                                             *tour-detours*
+
+Tour state does not follow the cursor. Moving through unrelated files for ten
+minutes leaves the tour on exactly the same conceptual step. Explicit next/prev
+navigation still works from that location and uses the current window. The plugin
+does not rearrange windows or manage tabs. Normal 'hidden'/modified-buffer rules
+apply to switching buffers.
+
+While the active target buffer is loaded, separate tracking extmarks follow edits
+to its primary and annotation ranges. Start gravity is right and end gravity is
+left: insertions exactly at boundaries stay outside. Undo restores mark positions.
+Before navigation, save or unload, positions reconcile into durable ranges. A
+wholly deleted region collapses to a valid position. Tracking IDs never persist.
+
+On reopening a step:
+    1. Search source lines for literal anchor substrings.
+    2. Relocate primary/annotation rows to the unique or nearest matching line.
+       Ties select the earlier line. Columns are unchanged.
+    3. If no match exists, use the saved range if valid.
+    4. If resolution fails, report an error without advancing or destroying UI.
+
+A missing anchor may be derived from a nonblank target start line. Hints survive
+while still matching the start line; edits can refresh them. Recovery does not
+use LSP, Treesitter, fuzzy matching, symbol indices or semantic inference. Inactive
+steps rely on anchors; their ranges do not track arbitrary edits in real time.
+
+==============================================================================
+PERSISTENCE                                              *tour-persistence*
+
+Default storage:
+    stdpath('state')/tour.nvim/tours/<id>.json
+    stdpath('state')/tour.nvim/index.json
+
+Tour files contain normalized v1 semantic data, progress, completion, project
+root, provenance and timestamps. No editor-runtime handles are persisted.
+
+Index shape:
+    { "version": 1, "projects": { "/canonical/project": "tour-id" } }
+
+Many tours can belong to a project. The index names its most recently saved or
+activated tour, including a completed tour. Missing/stale/invalid index entries
+fall back to scanning valid tour files by update time, with ID breaking ties.
+
+Writes use an exclusive same-directory temporary file, complete writes, fsync,
+close and atomic rename. Tour writes precede index updates. A process exit during
+a write cannot truncate the previous tour. There is no cross-process locking;
+concurrent writers are last-writer-wins. Directory metadata is not fsynced, so
+power-loss durability is not guaranteed.
+
+Navigation autosaves by default. Explicit saves, activation, close, finish,
+restart, and VimLeavePre persist even if autosave is disabled. Saving a tour does
+not write edited source buffers; save your code normally.
+
+Close/finish never delete saved data. Completed tours are replayable. One tour is
+loaded at a time. To remove a saved tour, delete its JSON file while it is not
+loaded; there is no deletion API in v1.
+
+An external tool can generate a Lua table for start() or JSON for :TourLoad. It
+needs no Neovim handles, server or protocol. For portable tours omit project_root
+and load from the desired project directory.
+
+==============================================================================
+HIGHLIGHTS                                                *tour-highlights*
+
+Default links (no hardcoded colors):
+    TourHeader         Title
+    TourDescription    Comment
+    TourAnnotation     SpecialComment
+    TourCurrent        CursorLineNr
+    TourRange          Underlined
+    TourHighlight      IncSearch
+
+Default links refresh on ColorScheme and respect existing user definitions. Use
+|nvim_set_hl()| to override them. 'signcolumn' and other plugins' signs are untouched.
+
+==============================================================================
+DEVELOPMENT                                              *tour-development*
+
+The repository includes a locked Nix flake and .envrc containing `use flake`.
+The shell pins Neovim 0.13 nightly plus LuaLS, StyLua, Selene, Git and a JSON Schema
+validator. Run from the repository: >sh
+    nix develop --command stylua lua plugin tests examples
+    nix develop --command selene lua plugin tests examples
+    nix develop --command nvim --headless -u NONE -i NONE -l tests/run.lua
+    nix develop --command bash -c 'check-jsonschema --schemafile schema/tour.schema.json examples/*.json'
+    nix flake check
+<
+For untracked local directories, use `path:.` as the flake reference. Checks run
+the same pinned editor, formatting, linting and JSON Schema validation. Headless
+tests inspect actual extmarks, saved JSON, failures during atomic replacement,
+project-scoped recovery, all bundled examples, and a separate Neovim process for
+VimLeavePre recovery. They include the detour/save/reset/resume contract.
+
+The repository README contains the full schema reference and architecture notes.
+`doc/api-notes.md` records the exact locally inspected Neovim 0.13 rendering APIs.
+
+vim:tw=78:ts=8:ft=help:norl:
