@@ -2,22 +2,9 @@ local position = require("tour.position")
 local project = require("tour.project")
 local M = {}
 
-function M.resolve(root, original)
+-- Pure relocation shared by navigation and non-mutating whole-tour validation.
+function M.relocate(original, lines)
   local step = vim.deepcopy(original)
-  local file = project.absolute(root, step.location.file)
-  local existing = vim.fn.bufnr(file)
-  if not (existing >= 0 and vim.api.nvim_buf_is_loaded(existing)) then
-    local stat = vim.uv.fs_stat(file)
-    if not stat or stat.type ~= "file" then
-      error("target file is missing or unreadable: " .. file, 0)
-    end
-    if vim.fn.filereadable(file) ~= 1 then
-      error("target file is unreadable: " .. file, 0)
-    end
-  end
-  local buf = vim.fn.bufadd(file)
-  vim.fn.bufload(buf)
-  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   local location = step.location
   local nearest
   if location.anchor then
@@ -40,18 +27,32 @@ function M.resolve(root, original)
       position.shift(note.range, delta)
     end
   end
-  if not position.valid(location.range, lines) then
+  if not location.anchor and position.valid(location.range, lines) then
+    local anchor = vim.trim(lines[location.range.start.line])
+    if #anchor > 0 then
+      location.anchor = anchor
+    end
+  end
+  return step
+end
+
+function M.resolve(root, original)
+  local file = project.absolute(root, original.location.file)
+  local snapshot, err = require("tour.source").read(root, file)
+  if not snapshot then
+    error(err.message, 0)
+  end
+  local buf = snapshot.bufnr or vim.fn.bufadd(file)
+  vim.fn.bufload(buf)
+  -- Read again after BufRead autocmds and file decoding have run.
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, true)
+  local step = M.relocate(original, lines)
+  if not position.valid(step.location.range, lines) then
     error("cannot resolve range in " .. file .. "; update its range or anchor", 0)
   end
   for i, note in ipairs(step.annotations) do
     if not position.valid(note.range, lines) then
       error("annotation " .. i .. " has an invalid range in " .. file, 0)
-    end
-  end
-  if not location.anchor then
-    local anchor = vim.trim(lines[location.range.start.line])
-    if #anchor > 0 then
-      location.anchor = anchor
     end
   end
   return buf, step

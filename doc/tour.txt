@@ -10,6 +10,7 @@ CONTENTS                                                        *tour.nvim*
     Setup                         |tour-setup|
     Commands                      |tour-commands|
     Lua API                       |tour-api|
+    Authoring helpers             |tour-authoring|
     Data format                   |tour-data|
     Annotations                   |tour-annotations|
     Detours and edits             |tour-detours|
@@ -30,12 +31,13 @@ No AI calls, PR fetching, diagrams, workspace management, or permanent sidebars.
 External tools produce data; tour.nvim presents it.
 
 Your editor position and tour progress are independent. Detours do not advance
-or rewind the tour. |TourNext| works from any buffer.
+or rewind the tour. |:TourNext| works from any buffer.
 
 ==============================================================================
 SETUP                                                           *tour-setup*
 
-Setup is optional. Defaults initialize when the first public API is called. >lua
+Setup is optional. Defaults initialize on the first session operation.
+Read-only authoring helpers do not initialize a session. >lua
     require('tour').setup({
       storage = {
         path = vim.fn.stdpath('state') .. '/tour.nvim',
@@ -91,6 +93,8 @@ COMMANDS                                                     *tour-commands*
 :TourOverview                                               *:TourOverview*
     Select a step in the loaded tour. A dot denotes the current step; checks
     denote preceding positions (or completion), not a separate visit history.
+    Displayed titles omit matching redundant step-number prefixes; saved titles
+    remain intact.
 
 :TourSave                                                        *:TourSave*
     Reconcile moving extmarks into semantic positions and persist progress.
@@ -117,8 +121,9 @@ not advance progress or clear the previous step's UI.
 ==============================================================================
 LUA API                                                          *tour-api*
 
-All functions are in `require('tour')`. Lua errors are raised for invalid input,
-unresolvable targets, or persistence failures; callers can use |pcall()|.
+All functions are in `require('tour')`. Session operations raise Lua errors for
+invalid input, unresolvable targets, or persistence failures; use |pcall()|.
+The |tour-authoring| helpers return structured results for expected failures.
 
 setup({opts})                                                 *tour.setup()*
     Initialize configuration, highlight defaults, commands, and autocmds.
@@ -170,6 +175,93 @@ statusline()                                             *tour.statusline()*
     Return "Tour 4/8 · Retry policy" while presentation is active, otherwise "".
     Escape literal percent signs for statusline format strings. Does not install
     or modify a statusline.
+
+gutter()                                                     *tour.gutter()*
+    Return a narrow range marker for the statuscolumn's current source line, or
+    a space outside the active range/on virtual explanation lines. Does not
+    initialize a session or change progress. Custom statuscolumns can include:
+        %#TourRange#%{v:lua.require'tour'.gutter()}%*
+
+==============================================================================
+AUTHORING HELPERS                                            *tour-authoring*
+
+These functions work through existing command-based editor integrations. They
+add no MCP server or symbol provider. Full examples and result shapes are in
+`doc/authoring.md` in the repository (also bundled with the tour skill).
+
+read_source({file}, {opts})                              *tour.read_source()*
+    opts: optional { project_root = path }.
+    Return { ok, file, lines, origin, revision, bufnr?, modified?, changedtick? }.
+    File is canonical/absolute; lines are raw strings without line numbers.
+    Prefer loaded buffers, including unsaved edits, otherwise read disk. Do not
+    load buffers or run read hooks. Buffer metadata is absent for disk reads.
+    Unloaded files use UTF-8 text, removing a BOM and normalizing CRLF. Load
+    unusual encodings in Neovim first. NUL-containing sources are rejected.
+    Revision is an opaque content digest of logical lines, not an editor handle.
+    Identical lines have identical revisions, even after undo or loading a file.
+
+resolve({opts})                                             *tour.resolve()*
+    opts: { file, snippet, project_root?, within?, revision? }.
+    Resolve a non-empty literal snippet (possibly multiline) to a byte range.
+    Use LF between snippet lines. Optional within is a range containing the
+    entire match; revision rejects content changed since inspection.
+    A unique match returns { ok = true, file, range, revision }.
+    No/multiple matches return ok = false, errors, file, revision, and candidates
+    (ranges). Overlapping occurrences count. Never silently choose a match.
+    Symbols from another tool may supply within; no symbol lookup is performed.
+
+validate({data}, {opts})                                   *tour.validate()*
+    opts: optional { revisions = { [source_path] = revision } }.
+    Check structure and EVERY step/annotation against loaded buffers or disk.
+    Return { ok, errors, revisions, data? }. Data exists only on success: it is a
+    detached normalized tour with anchor relocation applied. Revisions maps
+    canonical absolute paths to current digests. Expected input paths can also
+    be project-relative; extra inspected files are checked too.
+    Collect independent errors; skip only checks needing malformed parents or
+    endpoints. Each error has code/message and applicable path, file, step,
+    annotation, range, bounds. Indices are 1-based. Rejected ranges are after
+    relocation. Bounds: min_line/max_line/min_col/max_col; max_col exists only
+    for an endpoint on a valid line. UTF-8 boundaries are checked separately.
+    Stale errors include expected_revision and actual_revision.
+
+    read_source/resolve/validate do not initialize UI, load buffers, move cursors,
+    reconcile tracking marks, save tours, or change input tables. Their outputs
+    are copies. Runtime metadata and revision maps never belong in saved tours.
+
+start_checked({data}, {opts})                          *tour.start_checked()*
+load_checked({path}, {opts})                            *tour.load_checked()*
+    opts: the same revision map as validate(). Load ordinary v1 tour JSON or Lua
+    data, validate every location, then save and display. Check revisions again
+    after source read/enter hooks, before saving or replacing presentation.
+    Success receipt: >lua
+        { ok = true, id = 'tour-id', title = 'Example', current_step = 1,
+          step_count = 4, persisted = true, displayed = true, errors = {} }
+<
+    Preflight failures return ok/persisted/displayed=false and all errors. They
+    do not save the new tour or replace the active presentation. Read/enter hooks
+    can themselves change editor state; a later failure does not undo hooks.
+    On I/O/render failure inspect the receipt: persisted=true confirms tour and
+    index writes; false means no new-tour save attempt; JSON null means a write
+    was attempted but unconfirmed. A recoverable saved file may exist.
+    displayed=true confirms completed rendering; false means unconfirmed and
+    partial UI may exist after rendering errors. ID/title/progress are included
+    after successful preflight. Tour and index writes are individually atomic.
+    Existing start/load/:TourLoad retain their save-even-if-source-unavailable
+    behavior. Prefer checked variants for agent delivery.
+
+Expected errors return { ok = false, errors = { ... } }. Stable error codes:
+    invalid_request, invalid_schema, unreadable_file, unsupported_source,
+    invalid_range, stale_source, snippet_not_found, ambiguous_snippet,
+    invalid_json, persistence_failed, activation_failed.
+
+Through an existing MCP send_command tool, print and parse JSON: >vim
+    lua print(vim.json.encode(require('tour').load_checked('/tmp/tour.json')))
+<
+Pass inspection revisions as the second argument for stale-authoring detection.
+The bridge still carries command output as a string; no native structured MCP
+response is added. Check ok, persisted and displayed before reporting success.
+On stale_source, reread code and repair positions instead of just refreshing the
+expected revision. Source can still change after the final check.
 
 ==============================================================================
 DATA FORMAT                                                     *tour-data*
@@ -253,7 +345,8 @@ Example (from repository root): >lua
 Annotations may lie outside the primary region but must resolve in its file.
 JSON Schema checks structure. Lua adds range ordering, step ID uniqueness,
 progress bounds, and NUL validation. File existence and byte boundaries are
-checked when resolving each step, so not-yet-visited source may be unavailable.
+checked when resolving each step; |tour.validate()| and checked loading check
+all locations before activation.
 
 Project root resolution:
     1. Explicit project_root (relative roots resolve from the current directory).
@@ -287,9 +380,17 @@ window text space after number/sign columns. Multiple views of the same buffer
 share wrapping at the narrowest visible width. Resize events reflow the text.
 Neovim 0.13's virt_lines_overflow="wrap" also handles viewport overflow.
 
-Only the active step is decorated. The primary range uses an underline plus
-number-column highlights (if numbers are already enabled), without taking over
-signs. |TourClose|, |TourFinish| and navigation clear the plugin-owned namespaces.
+Only the active step is decorated. Its primary range has a narrow gutter beside
+line numbers, in its own statuscolumn cell. Native sign slots, fold columns and
+number/relativenumber behavior are retained. No source underlining is applied.
+Default statuscolumns are augmented only in windows showing the target buffer,
+then restored on detour or close. Existing custom statuscolumns are preserved;
+use |tour.gutter()| to add a segment to your custom format. Changes to the option
+by other plugins or the user are retained when closing.
+
+Each note has one marker with aligned continuation lines at the source indent.
+Inline/EOL overflow can use the full width below the attached first fragment.
+|:TourClose|, |:TourFinish| and navigation clear the plugin-owned namespaces.
 
 ==============================================================================
 DETOURS AND EDITS                                             *tour-detours*
@@ -353,31 +454,38 @@ An external tool can generate a Lua table for start() or JSON for :TourLoad. It
 needs no Neovim handles, server or protocol. For portable tours omit project_root
 and load from the desired project directory.
 
+For automatic authoring, install the repository's skills/tour skill in your
+coding harness and expose the existing Neovim MCP tools. The skill reads source,
+creates JSON, calls the public Lua API through send_command, and confirms that
+the tour opened. With a paired workspace it uses DEV_NVIM_SOCKET and an explicit
+DEV_WORKSPACE_ROOT. The Nix packages tour-nvim and tour-skill share one source;
+the skill package contains its schema and example. No new MCP server is needed.
+
 ==============================================================================
 HIGHLIGHTS                                                *tour-highlights*
 
-Default links (no hardcoded colors):
+Theme-derived defaults (no hardcoded colors):
     TourHeader         Title
-    TourDescription    Comment
-    TourAnnotation     SpecialComment
-    TourCurrent        CursorLineNr
-    TourRange          Underlined
-    TourHighlight      IncSearch
+    TourDescription    85% Normal foreground + 15% Comment foreground
+    TourAnnotation     65% Normal foreground + 35% Comment foreground, italic
+    TourRange          Title (gutter only)
+    TourHighlight      IncSearch (explicit annotation ranges)
 
-Default links refresh on ColorScheme and respect existing user definitions. Use
+If RGB foregrounds are unspecified, prose falls back to Normal/Comment links.
+Defaults refresh on ColorScheme and respect existing user definitions. Use
 |nvim_set_hl()| to override them. 'signcolumn' and other plugins' signs are untouched.
 
 ==============================================================================
 DEVELOPMENT                                              *tour-development*
 
 The repository includes a locked Nix flake and .envrc containing `use flake`.
-The shell pins Neovim 0.13 nightly plus LuaLS, StyLua, Selene, Git and a JSON Schema
-validator. Run from the repository: >sh
+The shell pins Neovim 0.13 nightly plus LuaLS, StyLua, Selene, Git, a JSON Schema
+validator, nixfmt, Actionlint, and Gitleaks. Run from the repository: >sh
     nix develop --command stylua lua plugin tests examples
     nix develop --command selene lua plugin tests examples
     nix develop --command nvim --headless -u NONE -i NONE -l tests/run.lua
     nix develop --command bash -c 'check-jsonschema --schemafile schema/tour.schema.json examples/*.json'
-    nix flake check
+    nix flake check --print-build-logs
 <
 For untracked local directories, use `path:.` as the flake reference. Checks run
 the same pinned editor, formatting, linting and JSON Schema validation. Headless

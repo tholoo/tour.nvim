@@ -1,6 +1,12 @@
 # tour.nvim
 
-Durable guided walkthroughs of real code, for **Neovim 0.13 only**.
+Durable guided code walkthroughs in Neovim, with inline annotations, free
+exploration, and resumable progress.
+
+**Neovim 0.13 only · No runtime dependencies · MIT licensed**
+
+[Quick start](#try-a-tour) · [Lua API](#commands-and-api) ·
+[Authoring reference](doc/authoring.md) · [Contributing](CONTRIBUTING.md)
 
 A tour is an ordered explanation of a codebase. Each step explains one conceptual
 region and can attach several smaller notes to expressions inside or around it.
@@ -17,20 +23,50 @@ external tool can produce a tour using any of those sources.
 
 ## Installation
 
-There are no runtime dependencies beyond Neovim 0.13 (including 0.13 development
-builds). Install this directory with your plugin manager or put it in
-`stdpath('data')/site/pack/local/start/tour.nvim`. For a local lazy.nvim checkout:
+Install with [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
-{ dir = "/path/to/tour.nvim", opts = {} }
+{
+  "tholoo/tour.nvim",
+  opts = {},
+}
 ```
 
-Run `:helptags /path/to/tour.nvim/doc` if your manager does not generate help tags.
-Then use `:help tour.nvim`.
+Use Neovim 0.13, including compatible development builds. Older Neovim releases
+are not supported. Nix is optional for users; it provides the pinned development
+and test environment described below. The plugin has no Lua runtime dependencies.
+
+For a local checkout, use `{ dir = "/path/to/tour.nvim", opts = {} }`, or place it
+in `stdpath('data')/site/pack/local/start/tour.nvim`. Run
+`:helptags /path/to/tour.nvim/doc` if your plugin manager does not generate tags,
+then `:help tour.nvim`.
+
+## Try a tour
+
+The repository includes source fixtures and three loadable tours. From a checkout,
+start a clean session with the pinned editor:
+
+```sh
+nix develop --command nvim --clean --cmd 'set runtimepath^=.' \
+  -c 'lua require("tour").load("examples/annotated-function.json")'
+```
+
+With the plugin already installed, open Neovim from the checkout and run
+`:TourLoad examples/annotated-function.json`.
+
+Use `:TourNext`, `:TourPrev`, or `:TourOverview` to navigate. Jump to another file
+at any point; the tour keeps its place. `:TourClose` hides it and saves progress.
+`:TourResume` brings it back, including after restarting Neovim in the project.
+
+For your own code, pass a Lua table to `require("tour").start(data)` or load v1 JSON
+with `:TourLoad`. Tours may come from a human, another plugin, or any coding agent.
+No model or provider integration is required. See the [complete example](#a-complete-tour)
+and [agent workflow](#automatic-tours-from-coding-agents).
 
 ## Setup
 
-Setup is optional; the first API operation initializes defaults.
+Setup is optional; the first session operation initializes defaults. Read-only
+authoring helpers do not initialize presentation.
 
 ```lua
 require("tour").setup({
@@ -89,7 +125,8 @@ tour.statusline()      -- current presentation label, or ""
 | `:TourFinish`, `:TourRestart` | Complete or replay the loaded tour |
 | `:TourLoad {json-file}` | Load external JSON; supports file completion |
 
-Lua operations raise contextual errors; commands report them with `vim.notify`.
+Navigation/session operations raise contextual errors; commands report them with
+`vim.notify`. The authoring helpers below return structured results instead.
 Navigation clamps at the first/last step and never implicitly finishes a tour.
 `finish()` preserves the current step, even when finishing early. Opening a
 completed tour permits navigation and retains its completion flag until
@@ -98,8 +135,9 @@ completed tour permits navigation and retains its completion flag until
 tracking/presentation marks; `statusline()` becomes empty.
 
 Overview checkmarks indicate positions before the current step (or completion),
-not a separately tracked visit history. `list()` returns data; `:TourList` opens
-the picker. All returned data are copies, never mutable plugin internals.
+not a separately tracked visit history. Displayed titles omit a matching leading
+step number (such as `2. ` on step 2); saved titles remain intact. `list()` returns
+data; `:TourList` opens the picker. All returned data are copies, never mutable plugin internals.
 
 ## A complete tour
 
@@ -173,7 +211,8 @@ Open Neovim in this repository and run:
 | `highlight` | Highlight the exact range; text is optional and is not displayed |
 
 Main descriptions have a tour counter/title and a softer description. Notes use
-a smaller `›` prefix; short inline/EOL text uses `‹`. Overflow and multiline
+a single `›` prefix with aligned continuations; short inline/EOL text uses `·`.
+Notes follow the source indentation. Overflow and multiline
 inline/EOL notes continue below in virtual lines. If there is too little room
 for a readable first fragment, the whole note appears below.
 
@@ -185,22 +224,38 @@ window. Resizing reflows presentation. Code is never hard-wrapped or changed.
 Horizontal scrolling can hide the short inline portion; continuation lines remain
 ordinary virtual lines. Very long descriptions may require scrolling.
 
-The active range uses a low-priority underline and number-column highlights.
-Number highlights are visible if line numbers are already enabled; the plugin
-does not enable them. Annotation highlights are stronger. Default highlight links:
+The active range is marked by a narrow `▎` gutter beside the line numbers. It
+occupies its own statuscolumn cell, leaving every Git/diagnostic sign slot and
+source highlight available. Native fold, sign, and relative/absolute number
+items retain their behavior. The gutter is installed only in target windows with
+the default statuscolumn; detouring away or closing restores it.
 
-| Group | Default link |
+Existing custom statuscolumns are preserved. To include the tour indicator in
+one, add this segment to its format (or have its provider return the segment):
+
+```lua
+"%#TourRange#%{v:lua.require'tour'.gutter()}%* "
+```
+
+`gutter()` returns `▎` for covered source lines in the rendered window, otherwise
+a space. It is a cheap presentation query and does not change progress. Virtual
+explanation lines have no range indicator. Changes made to a statuscolumn by the
+user or another plugin during a tour are retained when closing.
+
+Highlight defaults derive from the colorscheme:
+
+| Group | Default |
 | --- | --- |
 | `TourHeader` | `Title` |
-| `TourDescription` | `Comment` |
-| `TourAnnotation` | `SpecialComment` |
-| `TourCurrent` | `CursorLineNr` |
-| `TourRange` | `Underlined` |
-| `TourHighlight` | `IncSearch` |
+| `TourDescription` | 85% `Normal` foreground / 15% `Comment` foreground |
+| `TourAnnotation` | 65% `Normal` foreground / 35% `Comment` foreground, italic |
+| `TourRange` | `Title` (gutter only) |
+| `TourHighlight` | `IncSearch` (explicit annotation ranges) |
 
-Links are defaults and are reapplied on `ColorScheme`. Override them as usual
-with `nvim_set_hl`; no colors are hardcoded. Other plugins' signs and namespaces
-are untouched.
+Descriptions stay readable; notes use a quieter neutral color instead of a
+saturated syntax accent. If a theme leaves RGB foregrounds unspecified,
+descriptions fall back to `Normal` and notes to `Comment`. Defaults refresh on
+`ColorScheme`; override them with `nvim_set_hl` as usual. No colors are hardcoded.
 
 ## Public v1 schema
 
@@ -246,8 +301,9 @@ use its byte length; a one-past-EOF line is not accepted. Tabs count as one byte
 
 JSON Schema checks structure; the Lua validator additionally checks ordering,
 unique step IDs, progress bounds, and NUL rejection. File/range availability and
-UTF-8 byte boundaries are checked when resolving a step. Unvisited files need
-not exist yet, so a generated tour can remain saved while source is unavailable.
+UTF-8 byte boundaries are checked when resolving a step. The checked authoring
+APIs validate every step before activation. Ordinary `start`/`load` allow unvisited
+files to be unavailable, preserving tours for later recovery.
 
 Project root resolution is: explicit root, nearest ancestor `.git` directory or
 worktree marker file from the current working directory, then that directory.
@@ -297,8 +353,10 @@ by update time (ID breaks ties). Malformed tour files are skipped with a warning
 
 Each write uses an exclusive temporary file in the destination directory, writes
 all bytes, fsyncs, closes, and atomically renames. The tour is written before its
-index; an interrupted index update cannot destroy the saved tour. A new tour is
-saved even if its first target cannot currently be resolved. There is no deletion
+index; an interrupted index update cannot destroy the saved tour. With
+`start`/`load`, a new tour is saved even if its first target cannot currently be
+resolved. The checked authoring
+variants below require whole-tour validation before saving. There is no deletion
 API; remove an unwanted JSON file yourself while it is not loaded.
 
 Progress autosaves by default. `save()`, `close()`, `finish()`, `restart()`, initial
@@ -317,32 +375,123 @@ No server, protocol, AI integration, or runtime IDs are needed. Loading a tour
 with an existing ID updates it; reusing an ID from a different project is rejected.
 For portable tours, omit `project_root` and load from the intended project.
 
+## Automatic tours from coding agents
+
+The [tour skill](skills/tour/SKILL.md) teaches any skill-enabled harness to author
+and open a walkthrough through an existing Neovim MCP connection. Ask “tour me
+through your changes” or “walk me through this subsystem in Neovim.” The agent
+reads source revisions, resolves snippets, validates the entire tour, loads JSON
+with a structured receipt, and leaves navigation to you. It uses live buffers for unsaved source and preserves edits.
+
+Install the skill in the harness's skill directory. Its references link to the
+canonical schema, example, and authoring reference in this repository. Copy with
+symlinks dereferenced to make a standalone skill bundle:
+
+```sh
+cp -RL skills/tour /path/to/agent/skills/tour
+```
+
+The harness needs Neovim MCP tools that can read buffers and run Lua commands.
+With a paired workspace, forward `DEV_NVIM_SOCKET` to that MCP server and supply
+`DEV_WORKSPACE_ROOT` to the agent. A harness without those environment variables
+can match the editor to the requested project. No provider-specific extension,
+new MCP server, or API key is required by tour.nvim.
+
+For declarative Nix installation, this flake exports `packages.<system>.tour-nvim`
+and `packages.<system>.tour-skill`. Both use the same source; the skill package
+includes standalone schema, example, and authoring references. `nix/package.nix`
+can also be imported with `{ pkgs, src }` by configurations using this repository as a
+non-flake source input. Register the skill package with each harness's own skill
+catalog and install the plugin package in Neovim.
+
+## Authoring helpers
+
+These use the existing nvim-mcp `send_command` tool; no MCP changes are needed.
+See [the authoring reference](doc/authoring.md) for complete result shapes and the
+inspection-to-delivery workflow.
+
+```lua
+local tour = require("tour")
+local source = tour.read_source("src/main.rs", { project_root = "/project" })
+local match = tour.resolve({
+  project_root = "/project",
+  file = "src/main.rs",
+  snippet = "Config::new(&args)",
+  revision = source.revision,
+  -- within = enclosing_range,
+})
+-- On success, use match.range in a step or annotation.
+-- Ambiguous matches return candidate ranges; none is selected automatically.
+
+local opts = { revisions = { [source.file] = source.revision } }
+local checked = tour.validate(data, opts)
+-- { ok, errors, revisions, data? }; checks every step and annotation.
+local receipt = tour.load_checked("/tmp/my-tour.json", opts)
+-- Or tour.start_checked(data, opts).
+-- { ok, id, title, current_step, step_count, persisted, displayed, errors }
+```
+
+Check `ok` before using a result's fields. `read_source` returns unnumbered lines
+and, for loaded buffers, `bufnr`, `modified`, and `changedtick`. Unsaved edits take
+precedence over disk. Revisions are content digests; keep them separate from the
+saved tour. `validate`, `resolve`, and `read_source` neither initialize presentation
+nor load buffers, move the cursor, write storage, or modify their inputs.
+
+Validation collects schema and live range errors across the whole tour, with
+file, step/annotation indices, field paths, rejected ranges, and valid bounds as
+applicable. Successful validation returns normalized data with anchor relocation
+applied. Snippets may be multiline; the helper calculates byte columns and
+rejects ambiguity. Symbols remain an optional aid in the agent's existing tools,
+not a dependency or replacement for persisted ranges.
+
+Checked loading rejects validation failures and stale inspection revisions before
+saving or replacing the active tour. It checks again after source-opening hooks.
+On later I/O/rendering failure, a saved file or partial UI may exist: inspect the
+receipt. `persisted` is true for confirmed tour/index writes, false before a save
+attempt, or JSON null for an unconfirmed write. `displayed` confirms rendering.
+
+The bridge still wraps output in a string. Retrieve a consistent JSON result with:
+
+```vim
+lua print(vim.json.encode(require("tour").load_checked("/tmp/my-tour.json")))
+```
+
+Pass inspection revisions as the second argument to detect edits since authoring;
+the [skill](skills/tour/SKILL.md) demonstrates a separate options JSON file. Report
+success only when `ok`, `persisted`, and `displayed` are all true. Existing `load`,
+`start`, and `:TourLoad` retain their recovery semantics and return/raise behavior.
+
 ## Development
 
-The locked flake uses nixpkgs plus the small Neovim nightly overlay because
-nixpkgs currently packages 0.12. It pins Neovim **0.13.0-nightly+e884c01**. The dev
-shell provides that editor, LuaLS, StyLua, Selene, Git, and check-jsonschema.
+The locked flake uses nixpkgs plus the Neovim nightly overlay because the pinned
+nixpkgs snapshot packages 0.12. It pins Neovim **0.13.0-nightly+e884c01**. The dev
+shell provides that editor, LuaLS, StyLua, Selene, Git, check-jsonschema, nixfmt,
+Actionlint, and Gitleaks.
 
 ```sh
 direnv allow
 nix develop --command stylua lua plugin tests examples
 nix develop --command selene lua plugin tests examples
+nix develop --command nixfmt --check flake.nix nix/package.nix
 nix develop --command nvim --headless -u NONE -i NONE -l tests/run.lua
 nix develop --command bash -c 'check-jsonschema --schemafile schema/tour.schema.json examples/*.json'
-nix flake check
+nix flake check --print-build-logs
+nix build .#tour-nvim .#tour-skill --no-link
 ```
 
 Use `path:.` as the flake reference for an untracked local checkout. The native
 headless harness includes persistence fault injection, a separate Neovim process
 for exit recovery, annotation/namespace inspection, edit tracking, example loads,
 and the step-three detour/save/reset/resume contract. `flake check` runs formatting,
-linting, schema validation, and the complete headless suite. See
+linting, schema validation, workflow validation, secret scanning, and the complete
+headless suite. GitHub Actions also scans full Git history and builds both packages. See
 [doc/api-notes.md](doc/api-notes.md) for the locally inspected 0.13 API details.
 
 Implementation ownership is deliberately small: `model` validates/copies data,
-`project` and `position` normalize coordinates, `storage` owns JSON, `location`
-resolves anchors, `session` owns the single loaded tour, and `render` owns two
-namespaces. `init` and `commands` expose the public entry points. Wrapping is an
+`project` and `position` normalize coordinates, `storage` owns JSON, `source`
+reads immutable snapshots, `author` resolves snippets and validates live locations,
+`location` shares pure anchor relocation with navigation, `session` owns the
+single loaded tour, and `render` owns two namespaces. `init` and `commands` expose the public entry points. Wrapping is an
 isolated utility. There is no event bus, editor abstraction, or compatibility layer.
 
 V1 intentionally has one loaded tour at a time, buffer-wide presentation, and
@@ -352,4 +501,8 @@ power-loss durability of directory metadata, or semantically recover rewritten
 code. Long descriptions may exceed a viewport. These limits do not affect the
 separation between editor position and conceptual tour progress.
 
-MIT licensed.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development conventions and reporting
+bugs. [SECURITY.md](SECURITY.md) covers vulnerability reports and the privacy of
+saved tours. No telemetry or network calls are made by the plugin itself.
+
+Distributed under the [MIT license](LICENSE).

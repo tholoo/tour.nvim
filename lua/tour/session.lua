@@ -3,6 +3,7 @@ local storage = require("tour.storage")
 local project = require("tour.project")
 local location = require("tour.location")
 local render = require("tour.render")
+local text = require("tour.util.text")
 local M = {}
 local config = require("tour.config").make()
 local active, runtime
@@ -32,11 +33,14 @@ local function autosave()
   end
 end
 
-local function reveal(data, index)
+local function reveal(data, index, before_display)
   -- Resolve on a copy before changing progress or removing the old UI.
   local buf, step = location.resolve(data.project_root, data.steps[index])
   -- nvim_set_current_buf preserves window layout and respects 'hidden'.
   vim.api.nvim_set_current_buf(buf)
+  if before_display then
+    before_display()
+  end
   render.clear(runtime)
   runtime = nil
   data.steps[index] = step
@@ -144,12 +148,79 @@ function M.statusline()
   end
   -- Escape percent signs for direct inclusion in a statusline format.
   return ("Tour %d/%d · %s")
-    :format(active.current_step, #active.steps, active.steps[active.current_step].title)
+    :format(
+      active.current_step,
+      #active.steps,
+      text.step_title(active.steps[active.current_step].title, active.current_step)
+    )
     :gsub("%%", "%%%%")
 end
 
 function M.load(path)
   return M.start(storage.read(vim.fs.normalize(vim.fs.abspath(path))))
+end
+
+-- Agent-facing activation: whole-tour preflight and a JSON-friendly receipt.
+-- Existing start/load retain their save-even-if-unavailable recovery semantics.
+function M.start_checked(input, opts)
+  local author = require("tour.author")
+  local checked = author.validate(input, opts)
+  local receipt = { ok = false, persisted = false, displayed = false, errors = checked.errors }
+  if not checked.ok then
+    return receipt
+  end
+  local data = checked.data
+  receipt.id, receipt.title = data.id, data.title
+  receipt.current_step, receipt.step_count = data.current_step, #data.steps
+  local stage = "activation_failed"
+  local preflight_errors
+  local ok, err = pcall(function()
+    reveal(data, data.current_step, function()
+      -- BufRead/BufEnter hooks may have changed text since preflight. Check again
+      -- before saving the new tour or removing the previous presentation.
+      local latest = author.validate(data, { revisions = checked.revisions })
+      if not latest.ok then
+        preflight_errors = latest.errors
+        error("source changed during activation", 0)
+      end
+      stage = "persistence_failed"
+      if active then
+        M.save()
+      end
+      -- null means an interrupted/failed write has not been confirmed. The tour
+      -- file and project index are individually atomic, not one transaction.
+      receipt.persisted = vim.NIL
+      storage.save(config.storage.path, data)
+      receipt.persisted = true
+      stage = "activation_failed"
+    end)
+    receipt.displayed = true
+    stage = "persistence_failed"
+    receipt.persisted = vim.NIL
+    M.save()
+    receipt.persisted = true
+  end)
+  receipt.ok = ok
+  if not ok then
+    receipt.errors = preflight_errors or { { code = stage, message = tostring(err) } }
+  end
+  return receipt
+end
+
+function M.load_checked(path, opts)
+  local ok, data = pcall(function()
+    assert(type(path) == "string" and path ~= "", "path must be a non-empty string")
+    return storage.read(vim.fs.normalize(vim.fs.abspath(path)))
+  end)
+  if not ok then
+    return {
+      ok = false,
+      persisted = false,
+      displayed = false,
+      errors = { { code = "invalid_json", message = tostring(data) } },
+    }
+  end
+  return M.start_checked(data, opts)
 end
 
 function M.list(opts)
@@ -192,7 +263,8 @@ function M.overview()
     local symbol = i == data.current_step and "●"
       or (data.completed or i < data.current_step) and "✓"
       or " "
-    choices[i] = { index = i, label = ("%s %d  %s"):format(symbol, i, step.title) }
+    choices[i] =
+      { index = i, label = ("%s %d  %s"):format(symbol, i, text.step_title(step.title, i)) }
   end
   pick(choices, {
     prompt = data.title,

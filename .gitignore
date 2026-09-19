@@ -1,4 +1,21 @@
+# Local development and editor state
 .direnv/
-result
+.agents/
+.codex/
+/result
+/result-*
 *.log
-doc/tags
+*.swp
+*.swo
+*~
+.DS_Store
+/doc/tags
+
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

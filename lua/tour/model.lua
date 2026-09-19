@@ -70,19 +70,35 @@ local function integer(value, path, min)
   end
 end
 
-local function range(value, path)
-  object(value, path, fields("start end"))
-  for _, key in ipairs({ "start", "end" }) do
-    if value[key] == nil then
-      fail(path, "range is missing " .. key .. " position")
-    end
-    object(value[key], path .. "." .. key, fields("line col"))
-    integer(value[key].line, path .. "." .. key .. ".line", 1)
-    integer(value[key].col, path .. "." .. key .. ".col", 0)
+local function range(value, path, capture)
+  local check = capture or function(fn, ...)
+    fn(...)
+    return true
   end
-  local a, b = value.start, value["end"]
-  if b.line < a.line or (b.line == a.line and b.col < a.col) then
-    fail(path, "end must not precede start")
+  local valid = check(object, value, path, fields("start end"))
+  if type(value) ~= "table" then
+    return
+  end
+  for _, key in ipairs({ "start", "end" }) do
+    local point = value[key]
+    if point == nil then
+      check(fail, path, "range is missing " .. key .. " position")
+      valid = false
+    else
+      local object_ok = check(object, point, path .. "." .. key, fields("line col"))
+      valid = object_ok and valid
+      if type(point) == "table" then
+        local line_ok = check(integer, point.line, path .. "." .. key .. ".line", 1)
+        local col_ok = check(integer, point.col, path .. "." .. key .. ".col", 0)
+        valid = line_ok and col_ok and valid
+      end
+    end
+  end
+  if valid then
+    local a, b = value.start, value["end"]
+    if b.line < a.line or (b.line == a.line and b.col < a.col) then
+      check(fail, path, "end must not precede start")
+    end
   end
 end
 
@@ -121,82 +137,138 @@ function M.timestamp()
   return os.date("!%Y-%m-%dT%H:%M:%SZ")
 end
 
----@param input tour.Data
----@return tour.Data
-function M.normalize(input)
-  object(
-    input,
-    "tour",
-    fields(
-      "version id title project_root created_at updated_at current_step completed source steps"
+-- Collect independent structural failures, skipping only malformed parent objects.
+-- Rendering, source reads and persistence never participate in these checks.
+function M.validate(input)
+  local errors = {}
+  local function check(fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+      local message = tostring(err)
+      errors[#errors + 1] = {
+        code = "invalid_schema",
+        path = message:match("^([^:]+):") or "tour",
+        message = message,
+      }
+    end
+    return ok
+  end
+  local function condition(ok, path, message)
+    if not ok then
+      check(fail, path, message)
+    end
+  end
+  if
+    not check(
+      object,
+      input,
+      "tour",
+      fields(
+        "version id title project_root created_at updated_at current_step completed source steps"
+      )
     )
-  )
-  if input.version ~= 1 then
-    fail("version", "must be 1")
+  then
+    -- Unknown fields do not prevent checking known fields of an object.
+    if type(input) ~= "table" or vim.islist(input) then
+      return errors
+    end
   end
-  string_value(input.title, "title")
+  condition(input.version == 1, "version", "must be 1")
+  check(string_value, input.title, "title")
   for _, key in ipairs({ "id", "project_root", "created_at", "updated_at" }) do
-    string_value(input[key], key, true)
+    check(string_value, input[key], key, true)
   end
-  if input.id and (not input.id:match("^[%w_-]+$") or #input.id > 128) then
-    fail("id", "must contain 1-128 ASCII letters, digits, underscores or hyphens")
+  if type(input.id) == "string" then
+    condition(
+      input.id:match("^[A-Za-z0-9_-]+$") and #input.id <= 128,
+      "id",
+      "must contain 1-128 ASCII letters, digits, underscores or hyphens"
+    )
   end
   for _, key in ipairs({ "created_at", "updated_at" }) do
-    if input[key] and not input[key]:match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$") then
-      fail(key, "must use UTC YYYY-MM-DDTHH:MM:SSZ")
+    if type(input[key]) == "string" then
+      condition(
+        input[key]:match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$"),
+        key,
+        "must use UTC YYYY-MM-DDTHH:MM:SSZ"
+      )
     end
   end
-  if input.completed ~= nil and type(input.completed) ~= "boolean" then
-    fail("completed", "must be a boolean")
-  end
+  condition(
+    input.completed == nil or type(input.completed) == "boolean",
+    "completed",
+    "must be a boolean"
+  )
   if input.source ~= nil then
     if type(input.source) ~= "table" or (vim.islist(input.source) and next(input.source)) then
-      fail("source", "must be an object")
+      check(fail, "source", "must be an object")
+    else
+      check(json_value, input.source, "source", {})
     end
-    json_value(input.source, "source", {})
   end
-  list(input.steps, "steps")
-  if #input.steps == 0 then
-    fail("steps", "must contain at least one step")
+  if not check(list, input.steps, "steps") then
+    return errors
   end
-  if input.current_step ~= nil then
-    integer(input.current_step, "current_step", 1)
-    if input.current_step > #input.steps then
-      fail("current_step", "exceeds step count")
-    end
+  condition(#input.steps > 0, "steps", "must contain at least one step")
+  if input.current_step ~= nil and check(integer, input.current_step, "current_step", 1) then
+    condition(input.current_step <= #input.steps, "current_step", "exceeds step count")
   end
   local ids = {}
   for i, step in ipairs(input.steps) do
     local path = "step " .. i
-    object(step, path, fields("id title location description annotations"))
-    string_value(step.title, path .. ".title")
-    string_value(step.id, path .. ".id", true)
-    string_value(step.description, path .. ".description", true, true)
-    if step.id then
-      if ids[step.id] then
-        fail(path .. ".id", "duplicate step id")
+    check(object, step, path, fields("id title location description annotations"))
+    if type(step) == "table" then
+      check(string_value, step.title, path .. ".title")
+      check(string_value, step.id, path .. ".id", true)
+      check(string_value, step.description, path .. ".description", true, true)
+      if type(step.id) == "string" then
+        condition(not ids[step.id], path .. ".id", "duplicate step id")
+        ids[step.id] = true
       end
-      ids[step.id] = true
-    end
-    object(step.location, path .. ".location", fields("file range anchor"))
-    string_value(step.location.file, path .. ".location.file")
-    string_value(step.location.anchor, path .. ".location.anchor", true)
-    if step.location.anchor and step.location.anchor:find("[\r\n]") then
-      fail(path .. ".location.anchor", "must be a single line")
-    end
-    range(step.location.range, path .. ".location.range")
-    if step.annotations ~= nil then
-      list(step.annotations, path .. ".annotations")
-      for j, note in ipairs(step.annotations) do
-        local at = path .. " annotation " .. j
-        object(note, at, fields("range text placement"))
-        range(note.range, at .. ".range")
-        if not fields("above below inline eol highlight")[note.placement] then
-          fail(at, "unknown placement " .. vim.inspect(note.placement))
+      check(object, step.location, path .. ".location", fields("file range anchor"))
+      if type(step.location) == "table" then
+        check(string_value, step.location.file, path .. ".location.file")
+        check(string_value, step.location.anchor, path .. ".location.anchor", true)
+        if type(step.location.anchor) == "string" then
+          condition(
+            not step.location.anchor:find("[\r\n]"),
+            path .. ".location.anchor",
+            "must be a single line"
+          )
         end
-        string_value(note.text, at .. ".text", note.placement == "highlight")
+        range(step.location.range, path .. ".location.range", check)
+      end
+      if step.annotations ~= nil and check(list, step.annotations, path .. ".annotations") then
+        for j, note in ipairs(step.annotations) do
+          local at = path .. " annotation " .. j
+          check(object, note, at, fields("range text placement"))
+          if type(note) == "table" then
+            range(note.range, at .. ".range", check)
+            condition(
+              fields("above below inline eol highlight")[note.placement],
+              at,
+              "unknown placement " .. vim.inspect(note.placement)
+            )
+            check(string_value, note.text, at .. ".text", note.placement == "highlight")
+          end
+        end
       end
     end
+  end
+  return errors
+end
+
+-- Used by the authoring helper for its optional search scope.
+function M.check_range(value)
+  range(value, "range")
+end
+
+---@param input tour.Data
+---@return tour.Data
+function M.normalize(input)
+  local errors = M.validate(input)
+  if #errors > 0 then
+    error(errors[1].message, 0)
   end
   local data = vim.deepcopy(input)
   data.id = data.id

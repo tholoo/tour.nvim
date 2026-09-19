@@ -1,0 +1,30 @@
+name: Bug report
+description: Report a reproducible problem with tour.nvim.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use synthetic source and redact private paths or saved tour contents.
+        For vulnerabilities, follow SECURITY.md instead of posting details here.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Neovim version and tour.nvim commit. Only Neovim 0.13 is supported.
+      placeholder: Neovim 0.13 nightly, tour.nvim commit ...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include a small tour, synthetic source, configuration, and exact steps.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Include relevant errors and whether it reproduces with a clean configuration.
+    validations:
+      required: true

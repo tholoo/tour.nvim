@@ -36,6 +36,25 @@ function M.valid(range, lines)
   return true
 end
 
+-- Convert literal-match byte offsets in newline-joined source centrally.
+function M.from_offset(lines, offset)
+  for row, line in ipairs(lines) do
+    if offset <= #line then
+      return { line = row, col = offset }
+    end
+    offset = offset - #line - 1
+  end
+  error("source offset is out of bounds", 0)
+end
+
+function M.offset(lines, point)
+  local offset = point.col
+  for line = 1, M.row(point.line) do
+    offset = offset + #lines[line] + 1
+  end
+  return offset
+end
+
 function M.shift(range, delta)
   range.start.line = range.start.line + delta
   range["end"].line = range["end"].line + delta

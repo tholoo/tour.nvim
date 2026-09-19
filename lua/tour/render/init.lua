@@ -1,24 +1,43 @@
 local position = require("tour.position")
 local text = require("tour.util.text")
+local gutter = require("tour.render.gutter")
 local api = vim.api
 local M = {}
 local presentation = api.nvim_create_namespace("tour.presentation")
 local tracking = api.nvim_create_namespace("tour.tracking")
 
+-- Use the theme's foreground and comment colors, keeping prose readable
+-- without giving every note the theme's saturated SpecialComment accent.
+local function prose(group, weight, fallback, italic)
+  local normal = api.nvim_get_hl(0, { name = "Normal", link = false }).fg
+  local comment = api.nvim_get_hl(0, { name = "Comment", link = false }).fg
+  if not normal or not comment then
+    api.nvim_set_hl(0, group, { default = true, link = fallback })
+    return
+  end
+  local color = 0
+  for _, shift in ipairs({ 0, 8, 16 }) do
+    local base = 2 ^ shift
+    local a, b = math.floor(normal / base) % 256, math.floor(comment / base) % 256
+    color = color + math.floor(a * weight + b * (1 - weight) + 0.5) * base
+  end
+  api.nvim_set_hl(0, group, { default = true, fg = color, italic = italic })
+end
+
 function M.highlights()
   for group, link in pairs({
     TourHeader = "Title",
-    TourDescription = "Comment",
-    TourAnnotation = "SpecialComment",
-    TourCurrent = "CursorLineNr",
-    TourRange = "Underlined",
+    TourRange = "Title",
     TourHighlight = "IncSearch",
   }) do
     api.nvim_set_hl(0, group, { default = true, link = link })
   end
+  prose("TourDescription", 0.85, "Normal", false)
+  prose("TourAnnotation", 0.65, "Comment", true)
 end
 
 function M.clear(runtime)
+  gutter.clear()
   if runtime and api.nvim_buf_is_valid(runtime.buf) then
     api.nvim_buf_clear_namespace(runtime.buf, presentation, 0, -1)
     api.nvim_buf_clear_namespace(runtime.buf, tracking, 0, -1)
@@ -90,8 +109,13 @@ function M.draw(runtime, data, config)
   api.nvim_buf_clear_namespace(buf, presentation, 0, -1)
   local step = data.steps[data.current_step]
   local range = step.location.range
+  gutter.update(buf, range)
   local width = viewport(buf, config.max_width)
-  local header = ("Tour %d/%d · %s"):format(data.current_step, #data.steps, step.title)
+  local header = ("Tour %d/%d · %s"):format(
+    data.current_step,
+    #data.steps,
+    text.step_title(step.title, data.current_step)
+  )
   local lines = text.lines(header, width, "", "TourHeader")
   if step.description and step.description ~= "" then
     lines[#lines + 1] = { { "", "TourDescription" } }
@@ -104,16 +128,6 @@ function M.draw(runtime, data, config)
     virt_lines_overflow = "wrap",
     priority = 200,
   })
-  local row, col, opts = position.extmark(range)
-  opts.hl_group = "TourRange"
-  opts.priority = 90
-  api.nvim_buf_set_extmark(buf, presentation, row, col, opts)
-  for line = range.start.line, position.last_line(range) do
-    api.nvim_buf_set_extmark(buf, presentation, position.row(line), 0, {
-      number_hl_group = "TourCurrent",
-      priority = 110,
-    })
-  end
   for _, note in ipairs(step.annotations) do
     local start_row, start_col, highlight = position.extmark(note.range)
     if note.placement == "highlight" then
@@ -122,7 +136,11 @@ function M.draw(runtime, data, config)
       api.nvim_buf_set_extmark(buf, presentation, start_row, start_col, highlight)
     else
       local below_row = position.row(position.last_line(note.range))
-      local prefix = width >= 4 and "  › " or ""
+      local source_line = api.nvim_buf_get_lines(buf, start_row, start_row + 1, false)[1]
+      local indent =
+        math.min(vim.fn.strdisplaywidth(source_line:match("^%s*")), math.floor(width / 4))
+      local prefix = width >= indent + 5 and string.rep(" ", indent) .. "  › " or ""
+      local continuation = string.rep(" ", vim.fn.strdisplaywidth(prefix))
       if note.placement == "above" or note.placement == "below" then
         api.nvim_buf_set_extmark(
           buf,
@@ -130,7 +148,7 @@ function M.draw(runtime, data, config)
           note.placement == "above" and start_row or below_row,
           0,
           {
-            virt_lines = text.lines(note.text, width, prefix, "TourAnnotation"),
+            virt_lines = text.lines(note.text, width, prefix, "TourAnnotation", continuation),
             virt_lines_above = note.placement == "above",
             virt_lines_overflow = "wrap",
           }
@@ -148,20 +166,21 @@ function M.draw(runtime, data, config)
         local available = width - offset - 3
         local first, rest
         if available >= 8 then
-          rest = text.wrap(note.text, available)
+          rest = text.wrap(note.text, width - vim.fn.strdisplaywidth(prefix), available)
           first = table.remove(rest, 1)
         else
           rest = text.wrap(note.text, math.max(1, width - vim.fn.strdisplaywidth(prefix)))
         end
         local mark = { virt_lines_overflow = "wrap" }
         if first then
-          mark.virt_text = { { " ‹ " .. first, "TourAnnotation" } }
+          mark.virt_text = { { " · " .. first, "TourAnnotation" } }
           mark.virt_text_pos = note.placement
         end
         if #rest > 0 then
           mark.virt_lines = {}
-          for _, line in ipairs(rest) do
-            mark.virt_lines[#mark.virt_lines + 1] = { { prefix .. line, "TourAnnotation" } }
+          for i, line in ipairs(rest) do
+            local leader = not first and i == 1 and prefix or continuation
+            mark.virt_lines[#mark.virt_lines + 1] = { { leader .. line, "TourAnnotation" } }
           end
         end
         api.nvim_buf_set_extmark(buf, presentation, end_row, end_col, mark)

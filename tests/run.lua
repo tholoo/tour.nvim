@@ -406,14 +406,18 @@ for _, placement in ipairs({ "above", "below", "inline", "eol", "highlight" }) d
   end)
 end
 
-test("range highlight and number-column indication coexist", function()
+test("active region has an independent gutter without code underlining", function()
   tour.start(fixture())
-  assert(has(function(_, d)
-    return d.hl_group == "TourRange"
-  end))
-  assert(has(function(_, d)
-    return d.number_hl_group == "TourCurrent"
-  end))
+  assert(vim.wo.statuscolumn ~= "", "missing tour gutter")
+  assert(not has(function(_, d)
+    return d.hl_group == "TourRange" or d.number_hl_group == "TourCurrent"
+  end), "primary region must not alter source or number highlights")
+  local drawn = api.nvim_eval_statusline(vim.wo.statuscolumn, { use_statuscol_lnum = 3 }).str
+  assert(drawn:find("▎", 1, true), "gutter must mark covered lines")
+  local outside = api.nvim_eval_statusline(vim.wo.statuscolumn, { use_statuscol_lnum = 5 }).str
+  assert(not outside:find("▎", 1, true), "exclusive end must not mark the next line")
+  tour.close()
+  eq(vim.wo.statuscolumn, "")
 end)
 
 test("all five annotations remain one conceptual step", function()
@@ -578,6 +582,10 @@ test("all saved examples validate and load", function()
   for _, path in ipairs(vim.fn.glob(repo .. "/examples/*.json", false, true)) do
     local data = storage.read(path)
     model.normalize(data)
+    local checked = tour.validate(data)
+    assert(checked.ok, vim.inspect(checked.errors))
+    local receipt = tour.load_checked(path, { revisions = checked.revisions })
+    assert(receipt.ok and receipt.persisted and receipt.displayed, vim.inspect(receipt.errors))
     tour.load(path)
     for i = 1, #data.steps do
       tour.goto_step(i)
@@ -788,9 +796,16 @@ test("attached UI displays explanation next to actual source", function()
       local repo, store, data = ...
       vim.opt.runtimepath:prepend(repo)
       vim.o.swapfile = false
+      vim.wo.number = true
+      vim.wo.relativenumber = true
+      vim.wo.signcolumn = 'yes'
       local t = require('tour')
       t.setup({ storage = { path = store } })
       t.start(data)
+      vim.api.nvim_buf_set_extmark(0, vim.api.nvim_create_namespace('git-sign-fixture'), 2, 0, {
+        sign_text = '+', sign_hl_group = 'DiffAdd', priority = 10,
+      })
+      assert(vim.wo.signcolumn == 'yes', 'tour changed the sign column')
       vim.cmd.redraw()
     ]],
       { repo, store, data }
@@ -814,6 +829,9 @@ test("attached UI displays explanation next to actual source", function()
     local source = assert(screen:find("source_03 = value", 1, true))
     assert(header < description and description < source, "description must precede actual code")
     assert(screen:find("A smaller note.", 1, true), "annotation missing from screen")
+    local source_line = assert(screen:match("([^\n]*source_03 = value[^\n]*)"))
+    assert(source_line:find("+", 1, true), "Git sign was hidden")
+    assert(source_line:find("▎", 1, true), "tour gutter missing beside Git sign")
   end, debug.traceback)
   vim.fn.jobstop(child)
   assert(ok, err)
@@ -833,6 +851,437 @@ test("EOL notes on half-open line ranges attach to the last covered line", funct
     end
   end
   assert(found, "missing EOL annotation")
+end)
+
+test("gutter preserves custom statuscolumns and subsequent user changes", function()
+  local custom = "%s%=%l CUSTOM "
+  vim.wo.statuscolumn = custom
+  tour.start(fixture())
+  eq(vim.wo.statuscolumn, custom)
+  tour.close()
+  eq(vim.wo.statuscolumn, custom)
+  vim.wo.statuscolumn = ""
+  tour.restart()
+  vim.wo.statuscolumn = custom
+  tour.close()
+  eq(vim.wo.statuscolumn, custom)
+  vim.wo.statuscolumn = ""
+end)
+
+test("gutter leaves detour windows and follows new views of the target", function()
+  tour.start(fixture())
+  local source = api.nvim_get_current_buf()
+  local original = api.nvim_get_current_win()
+  vim.cmd.vsplit()
+  local other = api.nvim_get_current_win()
+  api.nvim_set_current_buf(api.nvim_create_buf(true, false))
+  eq(vim.wo.statuscolumn, "")
+  assert(vim.wo[original].statuscolumn ~= "", "visible target lost its gutter")
+  local drawn = api.nvim_eval_statusline(
+    vim.wo[original].statuscolumn,
+    { winid = original, use_statuscol_lnum = 3 }
+  ).str
+  assert(drawn:find("▎", 1, true), "non-current target window lost its range indicator")
+  api.nvim_set_current_buf(source)
+  assert(vim.wo.statuscolumn ~= "", "reopened target needs a gutter")
+  tour.close()
+  eq(vim.wo[original].statuscolumn, "")
+  eq(vim.wo[other].statuscolumn, "")
+  vim.cmd.close()
+end)
+
+test("annotation wrapping marks each note once and widens overflow", function()
+  local data = fixture()
+  data.steps[1].annotations = { note("below", string.rep("small details ", 8)) }
+  tour.start(data)
+  local found = false
+  for _, mark in ipairs(marks()) do
+    local lines = mark[4].virt_lines
+    if lines and lines[1][1][1]:find("›", 1, true) then
+      assert(#lines > 1, "expected wrapped note")
+      assert(not lines[2][1][1]:find("›", 1, true), "continuation repeats note marker")
+      found = true
+    end
+  end
+  assert(found, "missing annotation")
+  eq(text.wrap("one two three four five", 18, 7), { "one two", "three four five" })
+end)
+
+test("theme-derived prose has readable hierarchy and respects overrides", function()
+  local names = { "Normal", "Comment", "TourDescription", "TourAnnotation" }
+  local previous = {}
+  for _, name in ipairs(names) do
+    previous[name] = api.nvim_get_hl(0, { name = name })
+  end
+  local ok, err = xpcall(function()
+    api.nvim_set_hl(0, "Normal", { fg = 0xdddddd, bg = 0x111111 })
+    api.nvim_set_hl(0, "Comment", { fg = 0x444444 })
+    api.nvim_set_hl(0, "TourDescription", {})
+    api.nvim_set_hl(0, "TourAnnotation", {})
+    require("tour.render").highlights()
+    local description = api.nvim_get_hl(0, { name = "TourDescription", link = false })
+    local annotation = api.nvim_get_hl(0, { name = "TourAnnotation", link = false })
+    assert(
+      description.fg > annotation.fg and annotation.fg > 0x444444,
+      "prose hierarchy is too dim or reversed"
+    )
+    assert(annotation.italic, "notes should be visually distinct from the main description")
+    api.nvim_set_hl(0, "TourAnnotation", { fg = 0x123456 })
+    require("tour.render").highlights()
+    eq(api.nvim_get_hl(0, { name = "TourAnnotation", link = false }).fg, 0x123456)
+  end, debug.traceback)
+  for _, name in ipairs(names) do
+    api.nvim_set_hl(0, name, previous[name])
+  end
+  assert(ok, err)
+end)
+
+test("displayed titles omit duplicate numbering without changing durable data", function()
+  local data = fixture()
+  data.steps[1].title = "1. Concept one"
+  tour.start(data)
+  eq(tour.statusline(), "Tour 1/4 · Concept one")
+  eq(tour.current().steps[1].title, "1. Concept one")
+  eq(storage.open(store, data.id).steps[1].title, "1. Concept one")
+  eq(text.step_title("2.5 protocol", 2), "2.5 protocol")
+  eq(text.step_title("2. Section", 3), "2. Section")
+  assert(
+    has(function(_, d)
+      return d.virt_lines and d.virt_lines[1][1][1] == "Tour 1/4 · Concept one"
+    end),
+    "header still repeats the step number"
+  )
+end)
+
+test("source inspection returns unsaved raw lines and revision without opening files", function()
+  local before = api.nvim_list_bufs()
+  local current = api.nvim_get_current_buf()
+  local read = tour.read_source("main.lua", { project_root = root })
+  assert(read.ok, vim.inspect(read.errors))
+  eq(read.origin, "disk")
+  eq(read.lines[1], "  source_01 = value")
+  eq(read.bufnr, nil)
+  eq(api.nvim_list_bufs(), before)
+  eq(api.nvim_get_current_buf(), current)
+  local buf = vim.fn.bufadd(root .. "/main.lua")
+  vim.fn.bufload(buf)
+  local loaded = tour.read_source("main.lua")
+  eq(loaded.revision, read.revision)
+  api.nvim_buf_set_lines(buf, 0, 1, true, { "\tλ unsaved" })
+  read = tour.read_source("main.lua")
+  eq(read.lines[1], "\tλ unsaved")
+  eq(read.bufnr, buf)
+  eq(read.changedtick, api.nvim_buf_get_changedtick(buf))
+  eq(read.modified, true)
+  eq(read.origin, "buffer")
+  assert(read.revision ~= loaded.revision, "edits must change the revision")
+  read.lines[1] = "caller edit"
+  eq(api.nvim_buf_get_lines(buf, 0, 1, true), { "\tλ unsaved" })
+end)
+
+test("source inspection handles BOM CRLF empty files and absent final newline", function()
+  local path = root .. "/dos.lua"
+  local file = assert(io.open(path, "wb"))
+  file:write("\239\187\191one\r\ntwo\r\n")
+  file:close()
+  local disk = tour.read_source(path)
+  eq(disk.lines, { "one", "two" })
+  local buf = vim.fn.bufadd(path)
+  vim.fn.bufload(buf)
+  eq(tour.read_source(path).revision, disk.revision)
+  vim.fn.writefile({}, root .. "/empty.lua")
+  eq(tour.read_source("empty.lua").lines, { "" })
+  vim.fn.writefile({ "no newline" }, root .. "/no-newline.lua", "b")
+  eq(tour.read_source("no-newline.lua").lines, { "no newline" })
+  local missing = tour.read_source("missing.lua")
+  eq(missing.errors[1].code, "unreadable_file")
+  eq(missing.errors[1].file, root .. "/missing.lua")
+end)
+
+test("literal resolver calculates UTF-8 tabs multiline and exclusive byte endpoints", function()
+  vim.fn.writefile({ "\tλ = f(x)", "  return λ", "tail" }, root .. "/unicode.lua")
+  local one = tour.resolve({ file = "unicode.lua", snippet = "λ = f(x)" })
+  assert(one.ok, vim.inspect(one.errors))
+  eq(one.range, range(1, 1, 1, 10))
+  local multi = tour.resolve({ file = "unicode.lua", snippet = "f(x)\n  return λ" })
+  assert(multi.ok, vim.inspect(multi.errors))
+  eq(multi.range, range(1, 2, 6, 11))
+  eq(multi.revision, one.revision)
+  local ending = tour.resolve({ file = "unicode.lua", snippet = "return λ\n" })
+  eq(ending.range, range(2, 3, 2, 0))
+  local eof = tour.resolve({ file = "unicode.lua", snippet = "tail" })
+  eq(eof.range, range(3, 3, 0, 4))
+end)
+
+test(
+  "literal resolver reports ambiguity including overlapping matches and supports scope",
+  function()
+    vim.fn.writefile({ "banana", "banana" }, root .. "/duplicate.lua")
+    local result = tour.resolve({ file = "duplicate.lua", snippet = "ana" })
+    eq(result.ok, false)
+    eq(result.errors[1].code, "ambiguous_snippet")
+    eq(
+      result.candidates,
+      { range(1, 1, 1, 4), range(1, 1, 3, 6), range(2, 2, 1, 4), range(2, 2, 3, 6) }
+    )
+    result = tour.resolve({ file = "duplicate.lua", snippet = "ana", within = range(2, 2, 2, 6) })
+    assert(result.ok, vim.inspect(result.errors))
+    eq(result.range, range(2, 2, 3, 6))
+    result = tour.resolve({ file = "duplicate.lua", snippet = "missing" })
+    eq(result.errors[1].code, "snippet_not_found")
+    eq(result.candidates, {})
+    result = tour.resolve({ file = "duplicate.lua", snippet = "ana", within = range(1, 40) })
+    eq(result.errors[1].code, "invalid_range")
+    eq(result.errors[1].bounds.max_line, 2)
+    eq(tour.resolve({ file = "duplicate.lua", snippet = "" }).errors[1].code, "invalid_request")
+  end
+)
+
+test("whole-tour validation collects structural and live location errors together", function()
+  local data = fixture()
+  data.steps[1].title = nil
+  data.steps[1].annotations = { note("sideways", "bad placement"), note("eol", "bad column") }
+  data.steps[1].annotations[2].range["end"].col = 100
+  data.steps[2].location.range = range(31, 35)
+  data.steps[3].location.file = "missing.lua"
+  data.steps[4].annotations = { note("highlight") }
+  data.steps[4].annotations[1].range["end"] = nil
+  local before = vim.deepcopy(data)
+  local report = tour.validate(data)
+  eq(report.ok, false)
+  eq(report.data, nil)
+  eq(data, before)
+  local seen = {}
+  for _, err in ipairs(report.errors) do
+    seen[err.path] = err
+    assert(err.file and err.step, vim.inspect(err))
+  end
+  assert(seen["step 1.title"], "missing error for step 1.title")
+  assert(seen["step 1 annotation 1"], "missing error for step 1 annotation 1")
+  local annotation = seen["step 1 annotation 2.range.end"]
+  eq(annotation.annotation, 2)
+  eq(annotation.range["end"].col, 100)
+  eq(annotation.bounds.max_col, 19)
+  eq(seen["step 2.location.range.start"].bounds.max_line, 30)
+  assert(seen["step 2.location.range.end"], "missing error for step 2.location.range.end")
+  eq(seen["step 3.location.file"].code, "unreadable_file")
+  assert(seen["step 4 annotation 1.range"], "missing error for step 4 annotation 1.range")
+end)
+
+test(
+  "validation and resolution leave editor presentation progress and storage untouched",
+  function()
+    tour.start(fixture())
+    tour.goto_step(3)
+    local semantic, before_marks = tour.current(), marks()
+    local saved = storage.read(store .. "/tours/test-tour.json")
+    local index = storage.read(store .. "/index.json")
+    local cursor, buf = api.nvim_win_get_cursor(0), api.nvim_get_current_buf()
+    local buffers, windows = api.nvim_list_bufs(), api.nvim_list_wins()
+    local read_count = 0
+    local autocmd = api.nvim_create_autocmd("BufReadPost", {
+      callback = function()
+        read_count = read_count + 1
+      end,
+    })
+    vim.fn.writefile({ "new source" }, root .. "/unloaded.lua")
+    local data = fixture()
+    data.id = "unstarted"
+    data.steps[4].location = { file = "unloaded.lua", range = range(1, 1, 0, 10) }
+    local input = vim.deepcopy(data)
+    local result = tour.validate(data)
+    assert(result.ok, vim.inspect(result.errors))
+    assert(result.data.steps[4].location.anchor, "missing derived anchor")
+    eq(data, input)
+    assert(
+      tour.resolve({ file = "unloaded.lua", snippet = "new source" }).ok,
+      "snippet resolution failed"
+    )
+    eq(read_count, 0)
+    api.nvim_del_autocmd(autocmd)
+    eq(api.nvim_list_bufs(), buffers)
+    eq(api.nvim_list_wins(), windows)
+    eq(api.nvim_get_current_buf(), buf)
+    eq(api.nvim_win_get_cursor(0), cursor)
+    eq(marks(), before_marks)
+    eq(tour.current(), semantic)
+    eq(storage.read(store .. "/tours/test-tour.json"), saved)
+    eq(storage.read(store .. "/index.json"), index)
+    eq(vim.fn.filereadable(store .. "/tours/unstarted.json"), 0)
+  end
+)
+
+test(
+  "whole-tour validation uses unsaved buffers and the same anchor relocation as navigation",
+  function()
+    local data = fixture()
+    data.steps[4].location.anchor = "source_12"
+    data.steps[4].annotations = { { range = range(13, 13, 2, 8), placement = "highlight" } }
+    local buf = vim.fn.bufadd(root .. "/main.lua")
+    vim.fn.bufload(buf)
+    api.nvim_buf_set_lines(buf, 0, 0, true, { "inserted", "unsaved" })
+    local result = tour.validate(data)
+    assert(result.ok, vim.inspect(result.errors))
+    eq(result.data.steps[4].location.range.start.line, 14)
+    eq(result.data.steps[4].annotations[1].range.start.line, 15)
+    eq(data.steps[4].location.range.start.line, 12)
+    tour.start(result.data)
+    tour.goto_step(4)
+    eq(tour.current().steps[4].location.range, result.data.steps[4].location.range)
+  end
+)
+
+test("UTF-8 boundaries are validated for every annotation", function()
+  local data = fixture()
+  vim.fn.writefile({ "λ end" }, root .. "/unicode.lua")
+  data.steps[2].location = { file = "unicode.lua", range = range(1, 1, 0, 2) }
+  data.steps[2].annotations = { { range = range(1, 1, 1, 2), placement = "highlight" } }
+  local report = tour.validate(data)
+  eq(#report.errors, 1)
+  eq(report.errors[1].annotation, 1)
+  assert(report.errors[1].message:find("UTF-8", 1, true))
+end)
+
+test("source revisions detect edits on disk and in loaded buffers", function()
+  local read = tour.read_source("main.lua")
+  local revisions = { [read.file] = read.revision }
+  assert(tour.validate(fixture(), { revisions = revisions }).ok, "unchanged snapshot rejected")
+  vim.fn.writefile({ "changed on disk" }, root .. "/main.lua")
+  local result = tour.resolve({ file = "main.lua", snippet = "changed", revision = read.revision })
+  eq(result.errors[1].code, "stale_source")
+  result = tour.start_checked(fixture(), { revisions = revisions })
+  eq(result.ok, false)
+  eq(result.persisted, false)
+  eq(result.errors[1].code, "stale_source")
+  eq(tour.current(), nil)
+  eq(vim.fn.isdirectory(store), 0)
+  local buf = vim.fn.bufadd(root .. "/main.lua")
+  vim.fn.bufload(buf)
+  read = tour.read_source("main.lua")
+  api.nvim_buf_set_lines(buf, 0, 1, true, { "unsaved edit" })
+  eq(
+    tour.resolve({ file = "main.lua", snippet = "unsaved", revision = read.revision }).errors[1].code,
+    "stale_source"
+  )
+end)
+
+test("checked activation rejects later failures while preserving the active tour", function()
+  tour.start(fixture())
+  tour.goto_step(2)
+  local before, old_marks = tour.current(), marks()
+  local replacement = fixture()
+  replacement.id = "replacement"
+  replacement.steps[4].location.file = "absent.lua"
+  local receipt = tour.start_checked(replacement)
+  eq(receipt.ok, false)
+  eq(receipt.persisted, false)
+  eq(receipt.displayed, false)
+  eq(receipt.errors[1].step, 4)
+  eq(tour.current(), before)
+  eq(marks(), old_marks)
+  eq(vim.fn.filereadable(store .. "/tours/replacement.json"), 0)
+  eq(storage.recent(store, root).id, before.id)
+end)
+
+test("checked JSON loading returns a structured receipt and saves only semantic data", function()
+  local path = root .. "/tour.json"
+  storage.atomic_write(path, fixture())
+  local read = tour.read_source("main.lua")
+  local receipt = tour.load_checked(path, { revisions = { [read.file] = read.revision } })
+  eq(receipt, {
+    ok = true,
+    id = "test-tour",
+    title = "Test tour",
+    current_step = 1,
+    step_count = 4,
+    persisted = true,
+    displayed = true,
+    errors = {},
+  })
+  assert(#marks() > 0, "presentation was not reconstructed")
+  local saved = storage.open(store, receipt.id)
+  eq(saved.current_step, 1)
+  local json = vim.json.encode(saved)
+  for _, name in ipairs({ "bufnr", "changedtick", "revision", "persisted", "displayed" }) do
+    assert(not json:find('"' .. name .. '"', 1, true), "runtime metadata was persisted: " .. name)
+  end
+  vim.fn.writefile({ "invalid json" }, path)
+  receipt = tour.load_checked(path)
+  eq(receipt.errors[1].code, "invalid_json")
+  eq(tour.current().id, "test-tour")
+end)
+
+test("checked loading catches source changes from buffer read hooks before saving", function()
+  local autocmd = api.nvim_create_autocmd("BufReadPost", {
+    pattern = root .. "/main.lua",
+    callback = function(event)
+      api.nvim_buf_set_lines(event.buf, 0, 0, true, { "hook changed source" })
+    end,
+  })
+  local receipt = tour.start_checked(fixture())
+  api.nvim_del_autocmd(autocmd)
+  eq(receipt.ok, false)
+  eq(receipt.persisted, false)
+  eq(receipt.displayed, false)
+  eq(receipt.errors[1].code, "stale_source")
+  eq(tour.current(), nil)
+  eq(vim.fn.isdirectory(store), 0)
+end)
+
+test("checked loading reports persistence failures without claiming success", function()
+  local blocked = root .. "/blocked"
+  vim.fn.writefile({ "not a directory" }, blocked)
+  tour.setup({ storage = { path = blocked } })
+  local receipt = tour.start_checked(fixture())
+  eq(receipt.ok, false)
+  eq(receipt.persisted, vim.NIL)
+  eq(receipt.displayed, false)
+  eq(receipt.errors[1].code, "persistence_failed")
+  eq(tour.current(), nil)
+end)
+
+test("authoring interfaces handle malformed input and JSON roundtrip errors", function()
+  for _, input in ipairs({ false, 3, vim.NIL, {}, { steps = { false } } }) do
+    local result = tour.validate(input)
+    assert(not result.ok and #result.errors > 0, "malformed input accepted")
+    assert(vim.json.encode(result))
+  end
+  eq(tour.read_source(5).errors[1].code, "invalid_request")
+  eq(tour.resolve(false).errors[1].code, "invalid_request")
+  eq(tour.validate(fixture(), { revisions = false }).errors[1].code, "invalid_request")
+  eq(tour.validate(fixture(), { revisions = { [1] = true } }).errors[1].code, "invalid_request")
+end)
+
+test("schema collection reports both endpoints without abandoning later locations", function()
+  local data = fixture()
+  data.steps[1].location.range = range(0, 0, -1, -2)
+  data.steps[4].location.range = range(50, 51)
+  local result = tour.validate(data)
+  eq(#result.errors, 6)
+  eq(result.errors[1].path, "step 1.location.range.start.line")
+  eq(result.errors[2].path, "step 1.location.range.start.col")
+  eq(result.errors[3].path, "step 1.location.range.end.line")
+  eq(result.errors[4].path, "step 1.location.range.end.col")
+  eq(result.errors[5].step, 4)
+end)
+
+test("checked loading survives the existing command-output JSON transport", function()
+  local path = root .. "/tour.json"
+  local opts_path = root .. "/options.json"
+  storage.atomic_write(path, fixture())
+  local read = tour.read_source("main.lua")
+  storage.atomic_write(opts_path, { revisions = { [read.file] = read.revision } })
+  local command = ([[lua local opts = vim.json.decode(table.concat(vim.fn.readfile(%q), "\n")); print(vim.json.encode(require('tour').load_checked(%q, opts)))]]):format(
+    opts_path,
+    path
+  )
+  local output = api.nvim_exec2(command, { output = true }).output
+  local receipt = vim.json.decode(output)
+  eq(receipt.ok, true)
+  eq(receipt.persisted, true)
+  eq(receipt.displayed, true)
+  eq(receipt.step_count, 4)
+  eq(tour.current().id, receipt.id)
 end)
 
 if tour then
