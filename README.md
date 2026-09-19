@@ -3,6 +3,10 @@
 Durable guided code walkthroughs in Neovim, with inline annotations, free
 exploration, and resumable progress.
 
+![tour.nvim showing a retry function with a description above the code, inline and virtual-line annotations, a highlighted expression, and a range gutter](doc/images/showcase.png)
+
+*One conceptual stop, several annotations. The explanation is virtual; the code stays editable.*
+
 **Neovim 0.13 only · No runtime dependencies · MIT licensed**
 
 [Quick start](#try-a-tour) · [Lua API](#commands-and-api) ·
