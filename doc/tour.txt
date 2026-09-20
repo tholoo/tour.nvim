@@ -258,8 +258,13 @@ Through an existing MCP send_command tool, print and parse JSON: >vim
     lua print(vim.json.encode(require('tour').load_checked('/tmp/tour.json')))
 <
 Pass inspection revisions as the second argument for stale-authoring detection.
-The bridge still carries command output as a string; no native structured MCP
-response is added. Check ok, persisted and displayed before reporting success.
+This command-based transport carries output as a string. If a bridge exposes a
+structured wrapper for load_checked, use its advertised schema to pass the tour
+path and inspection revisions and read the receipt directly. tour.nvim installs
+no MCP tools and does not require any bridge-specific tool name. read_source
+already returns raw source lines and buffer metadata; changedtick is not a
+substitute for its content revision. See doc/authoring.md for integration and
+fallback examples. Check ok, persisted and displayed before reporting success.
 On stale_source, reread code and repair positions instead of just refreshing the
 expected revision. Source can still change after the final check.
 
@@ -456,10 +461,13 @@ and load from the desired project directory.
 
 For automatic authoring, install the repository's skills/tour skill in your
 coding harness and expose the existing Neovim MCP tools. The skill reads source,
-creates JSON, calls the public Lua API through send_command, and confirms that
-the tour opened. With a paired workspace it uses DEV_NVIM_SOCKET and an explicit
+creates JSON, uses checked loading through the available MCP tools, and confirms
+that the tour opened. With a paired workspace it uses DEV_NVIM_SOCKET and an explicit
 DEV_WORKSPACE_ROOT. The Nix packages tour-nvim and tour-skill share one source;
 the skill package contains its schema and example. No new MCP server is needed.
+The skill requires explicit highlight annotations covering every source line the
+user is expected to read, with separate ranges for noncontiguous code. The primary
+range's gutter marker and text annotations do not highlight the source text.
 
 ==============================================================================
 HIGHLIGHTS                                                *tour-highlights*

@@ -150,9 +150,38 @@ Error codes: `invalid_request`, `invalid_schema`, `unreadable_file`,
 `ambiguous_snippet`, `invalid_json`, `persistence_failed`, `activation_failed`.
 Consumers should branch on `code`, not parse `message` wording.
 
-## Existing nvim-mcp transport
+## MCP transport
 
-Use the existing `send_command` tool. For source inspection:
+The Lua helpers and skill do not install MCP tools. Discover the tools provided
+by the connected bridge: some integrations add structured tools, while ordinary
+nvim-mcp command tools remain sufficient. Source inspection, snippet resolution,
+and separate validation can still call the Lua helpers through `send_command`.
+
+### Optional structured integrations
+
+A bridge may expose a structured wrapper for `tour.load_checked`. Discover its
+advertised tool schema rather than assuming a particular tool name or argument
+shape. Pass the tour JSON path and original inspection revisions so the wrapper
+can call `tour.load_checked(path, { revisions = revisions })` and return its
+receipt directly, for example as MCP `structuredContent`.
+
+Check `ok`, `persisted`, and `displayed`; all must be true before reporting
+success. Keep the receipt's ID and progress fields for confirmation. A transport
+error means completion is unknown, not that nothing was saved. Mutating load
+requests must not be automatically replayed after a lost response; inspect the
+editor and saved tour before deciding to retry. A validation or stale-source
+error is not a reason to bypass checked loading via another transport.
+
+For machine-readable source inspection, `tour.read_source` already returns raw
+line arrays and, for loaded buffers, buffer ID, modified state, and changedtick.
+Compare buffer ID and changedtick only within the same editor session; use the
+content revision, not those editor handles, to guard checked tour loading.
+No structured bridge extension is required by the plugin or the portable skill.
+
+### Command-based fallback
+
+When no suitable structured wrapper is available, use `send_command` for
+delivery. For source inspection through this transport:
 
 ```vim
 lua print(vim.json.encode(require("tour").read_source("src/main.rs", { project_root = "/project" })))
@@ -168,7 +197,8 @@ lua local opts = vim.json.decode(table.concat(vim.fn.readfile("/tmp/unique-tour-
 
 Escape actual paths as Lua string literals. The bridge still transports command
 output as a string; parse the printed JSON object and inspect `ok`, `persisted`,
-and `displayed`. These helpers do not pretend to add native structured MCP tool
-responses. Plugin/connection errors can still be reported by the bridge itself.
+and `displayed`. This command-based transport does not provide a native
+structured receipt. Plugin/connection errors can still be reported by the bridge
+itself.
 Keep runtime metadata and revision maps out of the saved v1 tour. Remove only
 agent-created temporary files after confirmed successful delivery.

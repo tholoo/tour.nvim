@@ -385,7 +385,10 @@ The [tour skill](skills/tour/SKILL.md) teaches any skill-enabled harness to auth
 and open a walkthrough through an existing Neovim MCP connection. Ask “tour me
 through your changes” or “walk me through this subsystem in Neovim.” The agent
 reads source revisions, resolves snippets, validates the entire tour, loads JSON
-with a structured receipt, and leaves navigation to you. It uses live buffers for unsaved source and preserves edits.
+with a structured receipt, and leaves navigation to you. It uses live buffers for
+unsaved source and preserves edits. The skill requires explicit highlight
+annotations for every source line the reader is expected to read at each stop;
+the primary range's gutter marker alone is not a code highlight.
 
 Install the skill in the harness's skill directory. Its references link to the
 canonical schema, example, and authoring reference in this repository. Copy with
@@ -399,7 +402,10 @@ The harness needs Neovim MCP tools that can read buffers and run Lua commands.
 With a paired workspace, forward `DEV_NVIM_SOCKET` to that MCP server and supply
 `DEV_WORKSPACE_ROOT` to the agent. A harness without those environment variables
 can match the editor to the requested project. No provider-specific extension,
-new MCP server, or API key is required by tour.nvim.
+new MCP server, or API key is required by tour.nvim. If the bridge exposes a
+structured wrapper for checked loading, the skill can use its advertised schema;
+otherwise it uses the existing command-based workflow. Bridge-specific tools are
+not installed by tour.nvim.
 
 For declarative Nix installation, this flake exports `packages.<system>.tour-nvim`
 and `packages.<system>.tour-skill`. Both use the same source; the skill package
@@ -454,16 +460,19 @@ On later I/O/rendering failure, a saved file or partial UI may exist: inspect th
 receipt. `persisted` is true for confirmed tour/index writes, false before a save
 attempt, or JSON null for an unconfirmed write. `displayed` confirms rendering.
 
-The bridge still wraps output in a string. Retrieve a consistent JSON result with:
+With a command-only bridge, output is wrapped in a string. Retrieve a consistent
+JSON result with:
 
 ```vim
 lua print(vim.json.encode(require("tour").load_checked("/tmp/my-tour.json")))
 ```
 
 Pass inspection revisions as the second argument to detect edits since authoring;
-the [skill](skills/tour/SKILL.md) demonstrates a separate options JSON file. Report
-success only when `ok`, `persisted`, and `displayed` are all true. Existing `load`,
-`start`, and `:TourLoad` retain their recovery semantics and return/raise behavior.
+[the authoring reference](doc/authoring.md#mcp-transport) demonstrates a separate
+options JSON file for this fallback and the contract for optional structured
+integrations. Report success only when `ok`, `persisted`, and `displayed` are all
+true. Existing `load`, `start`, and `:TourLoad` retain their recovery semantics and
+return/raise behavior.
 
 ## Development
 
