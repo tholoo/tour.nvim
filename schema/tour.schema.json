@@ -97,6 +97,7 @@
           "$ref": "#/$defs/range"
         },
         "placement": {
+          "description": "Text annotation placement. Legacy highlight is accepted but not displayed.",
           "enum": [
             "above",
             "below",

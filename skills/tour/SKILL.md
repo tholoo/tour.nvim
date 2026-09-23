@@ -45,15 +45,10 @@ Use paths and positions from the actual project, not the example's fixture paths
 - Give each step an unnumbered title (tour.nvim displays the step counter),
   primary range, and description explaining what the
   reader is looking at and why it matters. Keep incidental details in annotations.
-- Highlight **every source line the user is expected to read for this step** with
-  explicit `placement: "highlight"` annotations. The primary range marks the
-  gutter only; it and text annotations are not substitutes for highlighting.
-  Cover the full relevant line text, from column 0 through the final line's byte
-  length. Use separate highlight ranges for noncontiguous reading, leaving
-  unrelated code unhighlighted; code in another file needs its own step.
-  Before delivery, check the description and notes against the highlight ranges:
-  every line needed to follow the explanation must be covered, not just the
-  function signature, anchor, or first line of a block.
+- Set the primary range to cover the code the reader needs for this stop; the
+  gutter indicates that region. Use text annotations for smaller details and
+  separate steps for distinct regions or files. Before delivery, check that each
+  description matches its primary range.
 - Positions use **1-based lines, 0-based byte columns, exclusive ends**. Count
   UTF-8 bytes, not characters; tabs occupy one byte. Both endpoints must exist in
   the source. End-of-file is the final line's byte length, not another line.
@@ -61,8 +56,8 @@ Use paths and positions from the actual project, not the example's fixture paths
   annotation refers to its step's file and may lie outside the primary range.
 - Use a distinctive literal substring from the primary range's **start line** as
   its anchor. Multiline anchors and anchors from another line are invalid hints.
-- Choose `above`/`below` for longer notes, `inline`/`eol` for short details, and
-  `highlight` for emphasis without text. Descriptions and notes remain unwrapped
+- Choose `above`/`below` for longer notes and `inline`/`eol` for short details.
+  Descriptions and notes remain unwrapped
   in JSON; tour.nvim handles display wrapping.
 - Supply `version = 1`. Start a new tour with a fresh ID, retaining it when fixing
   that same tour. Omit timestamps and progress fields to use plugin defaults.

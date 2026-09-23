@@ -28,7 +28,6 @@ function M.highlights()
   for group, link in pairs({
     TourHeader = "Title",
     TourRange = "Title",
-    TourHighlight = "IncSearch",
   }) do
     api.nvim_set_hl(0, group, { default = true, link = link })
   end
@@ -129,12 +128,9 @@ function M.draw(runtime, data, config)
     priority = 200,
   })
   for _, note in ipairs(step.annotations) do
-    local start_row, start_col, highlight = position.extmark(note.range)
-    if note.placement == "highlight" then
-      highlight.hl_group = "TourHighlight"
-      highlight.priority = 120
-      api.nvim_buf_set_extmark(buf, presentation, start_row, start_col, highlight)
-    else
+    -- Accept legacy v1 highlights without painting over the source code.
+    if note.placement ~= "highlight" then
+      local start_row = position.row(note.range.start.line)
       local below_row = position.row(position.last_line(note.range))
       local source_line = api.nvim_buf_get_lines(buf, start_row, start_row + 1, false)[1]
       local indent =

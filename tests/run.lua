@@ -387,24 +387,39 @@ test("multiline wrapping preserves paragraphs and limits display width", functio
   end
 end)
 
-for _, placement in ipairs({ "above", "below", "inline", "eol", "highlight" }) do
+for _, placement in ipairs({ "above", "below", "inline", "eol" }) do
   test(placement .. " annotation uses the expected extmark placement", function()
     local data = fixture()
-    data.steps[1].annotations =
-      { note(placement, placement ~= "highlight" and "Small note" or nil) }
+    data.steps[1].annotations = { note(placement, "Small note") }
     tour.start(data)
     assert(has(function(_, details)
       if placement == "above" or placement == "below" then
         return details.virt_lines
           and details.virt_lines[1][1][1]:find("Small note", 1, true)
           and (not not details.virt_lines_above) == (placement == "above")
-      elseif placement == "highlight" then
-        return details.hl_group == "TourHighlight" and details.end_col == 5
       end
       return details.virt_text_pos == placement
     end))
   end)
 end
+
+test("legacy highlight annotations never decorate source text", function()
+  local data = fixture()
+  data.steps[1].annotations = { note("highlight") }
+  local function check()
+    assert(not has(function(_, details)
+      return details.hl_group or details.line_hl_group or details.number_hl_group
+    end), "tour annotations must leave source highlighting alone")
+    local drawn = api.nvim_eval_statusline(vim.wo.statuscolumn, { use_statuscol_lnum = 3 }).str
+    assert(drawn:find("▎", 1, true), "gutter must still mark the active range")
+  end
+  tour.start(data)
+  check()
+  tour.close()
+  tour.resume()
+  check()
+  eq(tour.current().steps[1].annotations[1].placement, "highlight")
+end)
 
 test("active region has an independent gutter without code underlining", function()
   tour.start(fixture())

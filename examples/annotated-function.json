@@ -75,19 +75,6 @@
           },
           "placement": "eol",
           "text": "Delay may include jitter."
-        },
-        {
-          "range": {
-            "start": {
-              "line": 12,
-              "col": 8
-            },
-            "end": {
-              "line": 12,
-              "col": 16
-            }
-          },
-          "placement": "highlight"
         }
       ]
     }

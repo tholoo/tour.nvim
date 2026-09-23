@@ -14,8 +14,8 @@ exploration, and resumable progress.
 
 A tour is an ordered explanation of a codebase. Each step explains one conceptual
 region and can attach several smaller notes to expressions inside or around it.
-Descriptions appear above the code; annotations are virtual text, virtual lines,
-or highlights. They never become buffer contents.
+Descriptions appear above the code; annotations are virtual text or virtual
+lines. They never become buffer contents. The gutter marks the active range.
 
 Your editor position and your tour position are independent. Jump to definitions,
 switch buffers, search, or edit while on step 4. `:TourNext` still takes you to
@@ -182,10 +182,6 @@ not need to understand which failures are transient.]],
           placement = "below",
           text = "The policy decides whether another attempt is useful.",
         },
-        {
-          range = { start = { line = 11, col = 4 }, ["end"] = { line = 11, col = 19 } },
-          placement = "highlight",
-        },
       },
     },
   },
@@ -195,7 +191,7 @@ not need to understand which failures are transient.]],
 The three complete JSON examples are:
 
 - [Request flow](examples/request-flow.json): receiving, routing, and recording a request.
-- [Annotated function](examples/annotated-function.json): all five annotation placements on one stop.
+- [Annotated function](examples/annotated-function.json): all four text annotation placements on one stop.
 - [PR change tour](examples/pr-change-tour.json): illustrative provenance and stale-cache behavior.
 
 Open Neovim in this repository and run:
@@ -212,7 +208,7 @@ Open Neovim in this repository and run:
 | `below` | Wrapped virtual lines after the last covered line |
 | `inline` | Short text at the exclusive end of the expression, shifting displayed code |
 | `eol` | Short text after the last covered source line |
-| `highlight` | Highlight the exact range; text is optional and is not displayed |
+| `highlight` | Legacy v1 placement; accepted but not displayed |
 
 Main descriptions have a tour counter/title and a softer description. Notes use
 a single `›` prefix with aligned continuations; short inline/EOL text uses `·`.
@@ -254,7 +250,6 @@ Highlight defaults derive from the colorscheme:
 | `TourDescription` | 85% `Normal` foreground / 15% `Comment` foreground |
 | `TourAnnotation` | 65% `Normal` foreground / 35% `Comment` foreground, italic |
 | `TourRange` | `Title` (gutter only) |
-| `TourHighlight` | `IncSearch` (explicit annotation ranges) |
 
 Descriptions stay readable; notes use a quieter neutral color instead of a
 saturated syntax accent. If a theme leaves RGB foregrounds unspecified,
@@ -386,9 +381,8 @@ and open a walkthrough through an existing Neovim MCP connection. Ask “tour me
 through your changes” or “walk me through this subsystem in Neovim.” The agent
 reads source revisions, resolves snippets, validates the entire tour, loads JSON
 with a structured receipt, and leaves navigation to you. It uses live buffers for
-unsaved source and preserves edits. The skill requires explicit highlight
-annotations for every source line the reader is expected to read at each stop;
-the primary range's gutter marker alone is not a code highlight.
+unsaved source and preserves edits. The skill uses the primary range's gutter
+marker to indicate the code to read, with text annotations for smaller details.
 
 Install the skill in the harness's skill directory. Its references link to the
 canonical schema, example, and authoring reference in this repository. Copy with

@@ -373,7 +373,7 @@ below       Wrapped virtual lines after the last line covered by the range.
 inline      Short virtual text at the range's exclusive end; shifts displayed
             source to the right. Does not change bytes or cursor coordinates.
 eol         Short virtual text after the last source line covered by the range.
-highlight   Stronger highlighting on the exact range, without explanatory text.
+highlight   Legacy v1 placement; accepted but not displayed.
 
 Inline/EOL overflow continues below in virtual lines. When insufficient space
 remains for a readable fragment, the entire note is displayed below. Multiple
@@ -465,9 +465,8 @@ creates JSON, uses checked loading through the available MCP tools, and confirms
 that the tour opened. With a paired workspace it uses DEV_NVIM_SOCKET and an explicit
 DEV_WORKSPACE_ROOT. The Nix packages tour-nvim and tour-skill share one source;
 the skill package contains its schema and example. No new MCP server is needed.
-The skill requires explicit highlight annotations covering every source line the
-user is expected to read, with separate ranges for noncontiguous code. The primary
-range's gutter marker and text annotations do not highlight the source text.
+The skill uses the primary range's gutter marker to indicate the code to read,
+with text annotations for smaller details. Source syntax colors are preserved.
 
 ==============================================================================
 HIGHLIGHTS                                                *tour-highlights*
@@ -477,7 +476,6 @@ Theme-derived defaults (no hardcoded colors):
     TourDescription    85% Normal foreground + 15% Comment foreground
     TourAnnotation     65% Normal foreground + 35% Comment foreground, italic
     TourRange          Title (gutter only)
-    TourHighlight      IncSearch (explicit annotation ranges)
 
 If RGB foregrounds are unspecified, prose falls back to Normal/Comment links.
 Defaults refresh on ColorScheme and respect existing user definitions. Use

@@ -91,21 +91,7 @@
         }
       },
       "description": "The caller receives the cached value immediately. Completion of the refresh affects a subsequent request.",
-      "annotations": [
-        {
-          "range": {
-            "start": {
-              "line": 13,
-              "col": 2
-            },
-            "end": {
-              "line": 13,
-              "col": 20
-            }
-          },
-          "placement": "highlight"
-        }
-      ]
+      "annotations": []
     }
   ],
   "project_root": "."

@@ -11,9 +11,8 @@ No rendering compatibility branches exist.
   contents. This build supports `virt_lines_overflow = "wrap"` independent of
   `'wrap'`. The plugin also wraps explicitly to respect its configured maximum
   width and prefixes.
-- `number_hl_group` was verified but the active range now uses a dedicated
-  statuscolumn cell. `hl_group` with end positions highlights explicit annotation
-  ranges only.
+- `number_hl_group` was verified but the active range uses a dedicated
+  statuscolumn cell. Presentation leaves source and line-number highlights alone.
 - `:help 'statuscolumn'` (`options.txt`, lines 6379–6438): native `%C`, `%s`, and
   `%l` retain folds, signs, and number/relativenumber behavior. `v:lnum` and
   `v:virtnum` identify the drawn source/virtual line. Expressions evaluate in the
